@@ -1,0 +1,252 @@
+{
+  "name": "codex-chat-provider",
+  "displayName": "Pionus Codex Chat Provider",
+  "description": "Expose Codex as a VS Code/Copilot Chat language model provider with Codex-like settings and diagnostics.",
+  "version": "0.0.1",
+  "publisher": "pionus",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.104.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "activationEvents": [
+    "onLanguageModelChatProvider:pionus-codex",
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "check": "tsc -p ./ --noEmit",
+    "compile": "npm run check && node esbuild.mjs",
+    "test": "npm run check && tsc -p ./tsconfig.test.json && node --test out-test/test/*.test.js",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "openai": "^6.44.0",
+    "toml": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "@types/vscode": "^1.104.0",
+    "esbuild": "^0.25.5",
+    "typescript": "^5.9.2"
+  },
+  "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "pionus-codex",
+        "displayName": "Codex",
+        "managementCommand": "pionus.codex.manage"
+      }
+    ],
+    "commands": [
+      {
+        "command": "pionus.codex.manage",
+        "title": "Pionus Codex: Manage"
+      },
+      {
+        "command": "pionus.codex.openSettings",
+        "title": "Pionus Codex: Open Settings"
+      },
+      {
+        "command": "pionus.codex.openDebugLogs",
+        "title": "Pionus Codex: Open Debug Logs"
+      },
+      {
+        "command": "pionus.codex.setApiKey",
+        "title": "Pionus Codex: Set API Key"
+      },
+      {
+        "command": "pionus.codex.clearApiKey",
+        "title": "Pionus Codex: Clear API Key"
+      },
+      {
+        "command": "pionus.codex.selectAgentProfile",
+        "title": "Pionus Codex: Select Agent Profile"
+      },
+      {
+        "command": "pionus.codex.resetAgentProfile",
+        "title": "Pionus Codex: Reset Agent Profile"
+      },
+      {
+        "command": "pionus.codex.showStatus",
+        "title": "Pionus Codex: Show Status"
+      },
+      {
+        "command": "pionus.codex.showLastUsage",
+        "title": "Pionus Codex: Show Last Usage"
+      },
+      {
+        "command": "pionus.codex.copyContextSnapshot",
+        "title": "Pionus Codex: Copy IDE Context Snapshot"
+      },
+      {
+        "command": "pionus.codex.selectSkills",
+        "title": "Pionus Codex: Select Skills"
+      },
+      {
+        "command": "pionus.codex.clearSkills",
+        "title": "Pionus Codex: Clear Skills"
+      },
+      {
+        "command": "pionus.codex.runCliExec",
+        "title": "Pionus Codex: Run CLI Exec"
+      },
+      {
+        "command": "pionus.codex.runCliReview",
+        "title": "Pionus Codex: Run CLI Review"
+      }
+    ],
+    "configuration": {
+      "title": "Pionus Codex",
+      "properties": {
+        "pionus.codex.baseURL": {
+          "type": "string",
+          "default": "https://chatgpt.com/backend-api/codex/responses",
+          "description": "ChatGPT Codex backend URL used for Responses requests and model discovery."
+        },
+        "pionus.codex.clientVersion": {
+          "type": "string",
+          "default": "0.0.0",
+          "description": "client_version query parameter for Codex model discovery.",
+          "tags": ["advanced"]
+        },
+        "pionus.codex.credentialsSource": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "codexAuth", "secretStorage"],
+          "description": "Credential source for Codex requests."
+        },
+        "pionus.codex.model": {
+          "type": "string",
+          "default": "gpt-5.5",
+          "description": "Fallback model ID when discovery is unavailable."
+        },
+        "pionus.codex.instructions": {
+          "type": "string",
+          "default": "You are a helpful coding assistant integrated with VS Code.",
+          "description": "Base top-level Responses API instructions.",
+          "editPresentation": "multilineText"
+        },
+        "pionus.codex.defaultReasoningEffort": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "none", "minimal", "low", "medium", "high", "xhigh"],
+          "description": "Fallback reasoning effort when VS Code does not provide one."
+        },
+        "pionus.codex.maxOutputTokens": {
+          "type": "number",
+          "default": 8192,
+          "description": "Maximum output tokens when the active credential type supports it.",
+          "tags": ["advanced"]
+        },
+        "pionus.codex.enableImageInput": {
+          "type": "boolean",
+          "default": true,
+          "description": "Attempt to forward supported image data parts to Codex models that advertise image input."
+        },
+        "pionus.codex.enablePreviousResponseId": {
+          "type": "boolean",
+          "default": false,
+          "description": "Experimental: send previous_response_id when a stable session can be identified."
+        },
+        "pionus.codex.includeIdeContext": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include lightweight active-editor context in provider instructions."
+        },
+        "pionus.codex.ideContextMaxSelectionBytes": {
+          "type": "number",
+          "default": 12000,
+          "description": "Maximum bytes of selected active-editor text to include as IDE context."
+        },
+        "pionus.codex.includeCodexInstructions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include discovered Codex AGENTS.md instructions in provider requests."
+        },
+        "pionus.codex.projectDocFallbackFilenames": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Additional fallback filenames for Codex-style project instruction discovery."
+        },
+        "pionus.codex.projectDocMaxBytes": {
+          "type": "number",
+          "default": 32768,
+          "description": "Maximum combined bytes for discovered project instructions."
+        },
+        "pionus.codex.enableAgentProfiles": {
+          "type": "boolean",
+          "default": true,
+          "description": "Apply Codex-like provider agent profiles such as codex-plan and codex-execute."
+        },
+        "pionus.codex.activeAgentProfile": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Active provider agent profile. Leave empty to auto-select."
+        },
+        "pionus.codex.mirrorCodexConfiguredAgents": {
+          "type": "boolean",
+          "default": true,
+          "description": "Expose compatible Codex configured agents as codex-* provider profiles."
+        },
+        "pionus.codex.agentProfilePaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Additional directories containing Codex-style agent TOML files."
+        },
+        "pionus.codex.defaultPlanningProfile": {
+          "type": "string",
+          "default": "codex-plan",
+          "description": "Provider profile used when the request appears to be planning-oriented."
+        },
+        "pionus.codex.defaultExecutionProfile": {
+          "type": "string",
+          "default": "codex-execute",
+          "description": "Provider profile used when host tools are available for execution."
+        },
+        "pionus.codex.enableSkillInjection": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow configured SKILL.md files to be injected into provider instructions."
+        },
+        "pionus.codex.skillPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Paths to SKILL.md files or directories containing skills."
+        },
+        "pionus.codex.enableCliBridge": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable explicit Codex CLI bridge commands. Mutation-capable commands still ask for confirmation."
+        },
+        "pionus.codex.cliExecutable": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Optional Codex CLI executable path. Leave empty to resolve from PATH."
+        },
+        "pionus.codex.reviewModel": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Optional model override for review commands."
+        },
+        "pionus.codex.showUsageInStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show last completed Codex usage in the status bar."
+        },
+        "pionus.codex.modelPricingUsdPerMTok": {
+          "type": "object",
+          "default": {},
+          "description": "Optional local pricing overrides per 1M tokens for estimated cost display."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,215 @@
+import * as vscode from 'vscode';
+import { CodexModelProvider } from './provider.js';
+import { clearApiKey, setApiKey } from './secrets.js';
+import { getConfigurationSection, getProviderConfig } from './config.js';
+import { UsageStatusBar } from './usageStatus.js';
+import { loadAgentProfiles } from './agentProfiles.js';
+import { collectContextSnapshot, formatContextSnapshot, getPrimaryWorkspaceFolder } from './contextCollector.js';
+import { clearActiveSkillIds, discoverSkills, getActiveSkillIds, setActiveSkillIds } from './skills.js';
+import { buildReadOnlyCliCommand, toShellCommand } from './cliBridge.js';
+import { buildReviewCliCommand, describeReviewRequest, type ReviewRequest } from './review.js';
+
+export function activate(context: vscode.ExtensionContext): void {
+  const outputChannel = vscode.window.createOutputChannel('Pionus Codex Provider', { log: true });
+  const usageStatusBar = new UsageStatusBar(context);
+  const provider = new CodexModelProvider(context, outputChannel, usageStatusBar);
+
+  context.subscriptions.push(
+    outputChannel,
+    usageStatusBar,
+    vscode.lm.registerLanguageModelChatProvider('pionus-codex', provider),
+    vscode.commands.registerCommand('pionus.codex.openDebugLogs', () => outputChannel.show(true)),
+    vscode.commands.registerCommand('pionus.codex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', getConfigurationSection())),
+    vscode.commands.registerCommand('pionus.codex.setApiKey', async () => {
+      const apiKey = await vscode.window.showInputBox({ title: 'Set Codex API Key', prompt: 'Enter your API key', password: true, ignoreFocusOut: true });
+      if (apiKey?.trim()) {
+        await setApiKey(context, apiKey.trim());
+        await vscode.window.showInformationMessage('Pionus Codex API key saved.');
+      }
+    }),
+    vscode.commands.registerCommand('pionus.codex.clearApiKey', async () => {
+      await clearApiKey(context);
+      await vscode.window.showInformationMessage('Pionus Codex API key cleared.');
+    }),
+    vscode.commands.registerCommand('pionus.codex.selectAgentProfile', async () => selectAgentProfile(outputChannel)),
+    vscode.commands.registerCommand('pionus.codex.resetAgentProfile', () => setActiveAgentProfile(null)),
+    vscode.commands.registerCommand('pionus.codex.copyContextSnapshot', copyContextSnapshot),
+    vscode.commands.registerCommand('pionus.codex.selectSkills', async () => selectSkills(context, outputChannel)),
+    vscode.commands.registerCommand('pionus.codex.clearSkills', async () => {
+      await clearActiveSkillIds(context);
+      await vscode.window.showInformationMessage('Pionus Codex skills cleared.');
+    }),
+    vscode.commands.registerCommand('pionus.codex.runCliExec', runCliExec),
+    vscode.commands.registerCommand('pionus.codex.runCliReview', runCliReview),
+    vscode.commands.registerCommand('pionus.codex.showStatus', () => provider.showStatus()),
+    vscode.commands.registerCommand('pionus.codex.showLastUsage', () => usageStatusBar.showLastUsage()),
+    vscode.commands.registerCommand('pionus.codex.manage', async () => {
+      const action = await vscode.window.showQuickPick([
+        'Show Status',
+        'View Last Usage',
+        'Select Agent Profile',
+        'Reset Agent Profile',
+        'Copy IDE Context Snapshot',
+        'Select Skills',
+        'Clear Skills',
+        'Run CLI Exec',
+        'Run CLI Review',
+        'Open Debug Logs',
+        'Set API Key',
+        'Clear API Key',
+        'Open Settings'
+      ], { title: 'Pionus Codex' });
+      if (!action) {
+        return;
+      }
+      const commandMap: Record<string, string> = {
+        'Show Status': 'pionus.codex.showStatus',
+        'View Last Usage': 'pionus.codex.showLastUsage',
+        'Select Agent Profile': 'pionus.codex.selectAgentProfile',
+        'Reset Agent Profile': 'pionus.codex.resetAgentProfile',
+        'Copy IDE Context Snapshot': 'pionus.codex.copyContextSnapshot',
+        'Select Skills': 'pionus.codex.selectSkills',
+        'Clear Skills': 'pionus.codex.clearSkills',
+        'Run CLI Exec': 'pionus.codex.runCliExec',
+        'Run CLI Review': 'pionus.codex.runCliReview',
+        'Open Debug Logs': 'pionus.codex.openDebugLogs',
+        'Set API Key': 'pionus.codex.setApiKey',
+        'Clear API Key': 'pionus.codex.clearApiKey',
+        'Open Settings': 'pionus.codex.openSettings'
+      };
+      await vscode.commands.executeCommand(commandMap[action]);
+    })
+  );
+}
+
+export function deactivate(): void {}
+
+async function selectAgentProfile(outputChannel: vscode.LogOutputChannel): Promise<void> {
+  const profiles = await loadAgentProfiles(getProviderConfig(), outputChannel);
+  const selected = await vscode.window.showQuickPick(profiles.map((profile) => ({
+    label: profile.id,
+    description: profile.name,
+    detail: profile.description
+  })), { title: 'Select Pionus Codex Agent Profile' });
+  if (!selected) {
+    return;
+  }
+  await setActiveAgentProfile(selected.label);
+}
+
+async function setActiveAgentProfile(value: string | null): Promise<void> {
+  await vscode.workspace.getConfiguration(getConfigurationSection()).update('activeAgentProfile', value, vscode.ConfigurationTarget.Global);
+  await vscode.window.showInformationMessage(value ? `Pionus Codex agent profile set to ${value}.` : 'Pionus Codex agent profile reset to automatic selection.');
+}
+
+async function copyContextSnapshot(): Promise<void> {
+  const snapshot = formatContextSnapshot(collectContextSnapshot(getProviderConfig()));
+  await vscode.env.clipboard.writeText(snapshot);
+  await vscode.window.showInformationMessage('Pionus Codex IDE context snapshot copied.');
+}
+
+async function selectSkills(context: vscode.ExtensionContext, outputChannel: vscode.LogOutputChannel): Promise<void> {
+  const config = getProviderConfig();
+  const skills = await discoverSkills(config, outputChannel);
+  if (skills.length === 0) {
+    await vscode.window.showInformationMessage('No Pionus Codex skills found. Add SKILL.md files to pionus.codex.skillPaths.');
+    return;
+  }
+  const activeSkillIds = new Set(getActiveSkillIds(context));
+  const selected = await vscode.window.showQuickPick(skills.map((skill) => ({
+    label: skill.id,
+    description: skill.name,
+    detail: skill.filePath,
+    picked: activeSkillIds.has(skill.id)
+  })), { title: 'Select Pionus Codex Skills', canPickMany: true });
+  if (!selected) {
+    return;
+  }
+  await setActiveSkillIds(context, selected.map((item) => item.label));
+  await vscode.window.showInformationMessage(`Pionus Codex active skills: ${selected.length}.`);
+}
+
+async function runCliExec(): Promise<void> {
+  const enabled = await ensureCliBridgeEnabled();
+  if (!enabled) {
+    return;
+  }
+
+  const prompt = await vscode.window.showInputBox({
+    title: 'Run Codex CLI Exec',
+    prompt: 'Initial instructions for a read-only Codex CLI exec run',
+    ignoreFocusOut: true
+  });
+  if (!prompt?.trim()) {
+    return;
+  }
+
+  const enableSearch = await vscode.window.showQuickPick(['No web search', 'Enable web search'], { title: 'Codex CLI web search' }) === 'Enable web search';
+  const attachImages = await vscode.window.showQuickPick(['No images', 'Attach image files'], { title: 'Codex CLI image input' }) === 'Attach image files';
+  const imageUris = attachImages ? await vscode.window.showOpenDialog({ canSelectMany: true, filters: { Images: ['png', 'jpg', 'jpeg', 'webp', 'gif'] } }) : undefined;
+  const config = getProviderConfig();
+  const command = buildReadOnlyCliCommand(config, {
+    prompt: `${prompt.trim()}\n\n${formatContextSnapshot(collectContextSnapshot(config))}`,
+    cwd: getPrimaryWorkspaceFolder(),
+    model: config.model,
+    imagePaths: imageUris?.map((uri) => uri.fsPath),
+    enableSearch
+  });
+  launchTerminal('Pionus Codex Exec', command.executable, toShellCommand(command), getPrimaryWorkspaceFolder());
+}
+
+async function runCliReview(): Promise<void> {
+  const enabled = await ensureCliBridgeEnabled();
+  if (!enabled) {
+    return;
+  }
+
+  const mode = await vscode.window.showQuickPick([
+    { label: 'Working Tree', requestMode: 'working-tree' as const },
+    { label: 'Against Base Branch', requestMode: 'base' as const },
+    { label: 'Commit', requestMode: 'commit' as const }
+  ], { title: 'Codex CLI Review Target' });
+  if (!mode) {
+    return;
+  }
+
+  const target = mode.requestMode === 'working-tree' ? undefined : await vscode.window.showInputBox({
+    title: mode.requestMode === 'base' ? 'Base branch' : 'Commit SHA',
+    ignoreFocusOut: true
+  });
+  if (mode.requestMode !== 'working-tree' && !target?.trim()) {
+    return;
+  }
+
+  const instructions = await vscode.window.showInputBox({
+    title: 'Optional Codex review instructions',
+    prompt: 'Leave empty to use Codex defaults',
+    ignoreFocusOut: true
+  });
+  const request: ReviewRequest = { mode: mode.requestMode, target, instructions };
+  const command = buildReviewCliCommand(getProviderConfig(), request);
+  launchTerminal(`Pionus Codex Review: ${describeReviewRequest(request)}`, command.executable, toShellCommand(command), getPrimaryWorkspaceFolder());
+}
+
+async function ensureCliBridgeEnabled(): Promise<boolean> {
+  const config = getProviderConfig();
+  if (config.enableCliBridge) {
+    return true;
+  }
+
+  const action = await vscode.window.showWarningMessage('Pionus Codex CLI bridge is disabled.', 'Enable and Run', 'Open Settings');
+  if (action === 'Enable and Run') {
+    await vscode.workspace.getConfiguration(getConfigurationSection()).update('enableCliBridge', true, vscode.ConfigurationTarget.Global);
+    return true;
+  }
+  if (action === 'Open Settings') {
+    await vscode.commands.executeCommand('pionus.codex.openSettings');
+  }
+  return false;
+}
+
+function launchTerminal(name: string, executable: string, command: string, cwd: string | undefined): void {
+  const terminal = vscode.window.createTerminal({ name, cwd, isTransient: false });
+  terminal.show();
+  terminal.sendText(`command -v ${executable} >/dev/null 2>&1 && ${command} || printf 'Pionus Codex: command not found: %s\\n' ${JSON.stringify(executable)}`);
+}

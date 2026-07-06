@@ -1,0 +1,31 @@
+import type { ProviderConfig } from '../src/config.js';
+
+export const baseConfig = {
+  baseURL: 'https://chatgpt.com/backend-api/codex/responses',
+  clientVersion: '0.0.0',
+  credentialsSource: 'auto',
+  model: 'gpt-5.5',
+  instructions: 'You are a helpful coding assistant integrated with VS Code.',
+  defaultReasoningEffort: undefined,
+  maxOutputTokens: 8192,
+  enableImageInput: true,
+  enablePreviousResponseId: false,
+  includeIdeContext: true,
+  ideContextMaxSelectionBytes: 12000,
+  includeCodexInstructions: true,
+  projectDocFallbackFilenames: [],
+  projectDocMaxBytes: 32768,
+  enableAgentProfiles: true,
+  activeAgentProfile: undefined,
+  mirrorCodexConfiguredAgents: true,
+  agentProfilePaths: [],
+  defaultPlanningProfile: 'codex-plan',
+  defaultExecutionProfile: 'codex-execute',
+  enableSkillInjection: true,
+  skillPaths: [],
+  enableCliBridge: false,
+  cliExecutable: undefined,
+  reviewModel: undefined,
+  showUsageInStatusBar: true,
+  modelPricingUsdPerMTok: {}
+} satisfies ProviderConfig;
