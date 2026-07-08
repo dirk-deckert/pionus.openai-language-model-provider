@@ -1,10 +1,11 @@
 import type { ResponseInputItem } from 'openai/resources/responses/responses';
-import * as vscode from 'vscode';
+import type * as vscode from 'vscode';
 
 export type ResponsesInputMessage = ResponseInputItem;
 
 const textDecoder = new TextDecoder();
 const USAGE_DATA_PART_MIME = 'usage';
+const LANGUAGE_MODEL_CHAT_MESSAGE_ROLE_USER = 1;
 
 export function convertMessagesToResponsesInput(messages: readonly vscode.LanguageModelChatRequestMessage[], enableImageInput: boolean): ResponsesInputMessage[] {
   return messages.flatMap((message) => convertMessageToResponsesInput(message, enableImageInput));
@@ -20,7 +21,7 @@ export function estimateTokenCount(value: string | vscode.LanguageModelChatReque
 
 function convertMessageToResponsesInput(message: vscode.LanguageModelChatRequestMessage, enableImageInput: boolean): ResponsesInputMessage[] {
   const items: ResponsesInputMessage[] = [];
-  const role = message.role === vscode.LanguageModelChatMessageRole.User ? 'user' : 'assistant';
+  const role = message.role === LANGUAGE_MODEL_CHAT_MESSAGE_ROLE_USER ? 'user' : 'assistant';
   let bufferedText = '';
 
   const flushText = () => {
@@ -33,12 +34,12 @@ function convertMessageToResponsesInput(message: vscode.LanguageModelChatRequest
   };
 
   for (const part of message.content) {
-    if (part instanceof vscode.LanguageModelTextPart) {
+    if (isTextPart(part)) {
       bufferedText += part.value;
       continue;
     }
 
-    if (part instanceof vscode.LanguageModelDataPart) {
+    if (isDataPart(part)) {
       if (enableImageInput && isImageMime(part.mimeType)) {
         flushText();
         items.push({
@@ -60,7 +61,7 @@ function convertMessageToResponsesInput(message: vscode.LanguageModelChatRequest
       continue;
     }
 
-    if (part instanceof vscode.LanguageModelToolCallPart) {
+    if (isToolCallPart(part)) {
       flushText();
       items.push({
         type: 'function_call',
@@ -71,7 +72,7 @@ function convertMessageToResponsesInput(message: vscode.LanguageModelChatRequest
       continue;
     }
 
-    if (part instanceof vscode.LanguageModelToolResultPart) {
+    if (isToolResultPart(part)) {
       flushText();
       items.push({
         type: 'function_call_output',
@@ -87,10 +88,10 @@ function convertMessageToResponsesInput(message: vscode.LanguageModelChatRequest
 
 function serializeToolResultContent(content: readonly unknown[]): string {
   return content.map((part) => {
-    if (part instanceof vscode.LanguageModelTextPart) {
+    if (isTextPart(part)) {
       return part.value;
     }
-    if (part instanceof vscode.LanguageModelDataPart) {
+    if (isDataPart(part)) {
       return serializeDataPart(part);
     }
     return safeJsonStringify(part);
@@ -110,6 +111,26 @@ function serializeDataPart(part: vscode.LanguageModelDataPart): string {
 
 function isImageMime(mimeType: string): boolean {
   return ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'].includes(mimeType.toLowerCase());
+}
+
+function isTextPart(value: unknown): value is vscode.LanguageModelTextPart {
+  return hasObjectShape(value) && typeof value.value === 'string';
+}
+
+function isDataPart(value: unknown): value is vscode.LanguageModelDataPart {
+  return hasObjectShape(value) && typeof value.mimeType === 'string' && value.data instanceof Uint8Array;
+}
+
+function isToolCallPart(value: unknown): value is vscode.LanguageModelToolCallPart {
+  return hasObjectShape(value) && typeof value.callId === 'string' && typeof value.name === 'string' && 'input' in value;
+}
+
+function isToolResultPart(value: unknown): value is vscode.LanguageModelToolResultPart {
+  return hasObjectShape(value) && typeof value.callId === 'string' && Array.isArray(value.content);
+}
+
+function hasObjectShape(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function safeJsonStringify(value: unknown): string {

@@ -3781,15 +3781,15 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
-var vscode9 = __toESM(require("vscode"));
-
-// src/provider.ts
 var vscode7 = __toESM(require("vscode"));
 
+// src/provider.ts
+var vscode5 = __toESM(require("vscode"));
+
 // src/convertMessages.ts
-var vscode = __toESM(require("vscode"));
 var textDecoder = new TextDecoder();
 var USAGE_DATA_PART_MIME = "usage";
+var LANGUAGE_MODEL_CHAT_MESSAGE_ROLE_USER = 1;
 function convertMessagesToResponsesInput(messages, enableImageInput) {
   return messages.flatMap((message) => convertMessageToResponsesInput(message, enableImageInput));
 }
@@ -3802,7 +3802,7 @@ function estimateTokenCount(value) {
 }
 function convertMessageToResponsesInput(message, enableImageInput) {
   const items = [];
-  const role = message.role === vscode.LanguageModelChatMessageRole.User ? "user" : "assistant";
+  const role = message.role === LANGUAGE_MODEL_CHAT_MESSAGE_ROLE_USER ? "user" : "assistant";
   let bufferedText = "";
   const flushText = () => {
     if (!bufferedText.trim()) {
@@ -3813,11 +3813,11 @@ function convertMessageToResponsesInput(message, enableImageInput) {
     bufferedText = "";
   };
   for (const part of message.content) {
-    if (part instanceof vscode.LanguageModelTextPart) {
+    if (isTextPart(part)) {
       bufferedText += part.value;
       continue;
     }
-    if (part instanceof vscode.LanguageModelDataPart) {
+    if (isDataPart(part)) {
       if (enableImageInput && isImageMime(part.mimeType)) {
         flushText();
         items.push({
@@ -3838,7 +3838,7 @@ function convertMessageToResponsesInput(message, enableImageInput) {
       }
       continue;
     }
-    if (part instanceof vscode.LanguageModelToolCallPart) {
+    if (isToolCallPart(part)) {
       flushText();
       items.push({
         type: "function_call",
@@ -3848,7 +3848,7 @@ function convertMessageToResponsesInput(message, enableImageInput) {
       });
       continue;
     }
-    if (part instanceof vscode.LanguageModelToolResultPart) {
+    if (isToolResultPart(part)) {
       flushText();
       items.push({
         type: "function_call_output",
@@ -3862,10 +3862,10 @@ function convertMessageToResponsesInput(message, enableImageInput) {
 }
 function serializeToolResultContent(content) {
   return content.map((part) => {
-    if (part instanceof vscode.LanguageModelTextPart) {
+    if (isTextPart(part)) {
       return part.value;
     }
-    if (part instanceof vscode.LanguageModelDataPart) {
+    if (isDataPart(part)) {
       return serializeDataPart(part);
     }
     return safeJsonStringify(part);
@@ -3884,6 +3884,21 @@ function serializeDataPart(part) {
 function isImageMime(mimeType) {
   return ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"].includes(mimeType.toLowerCase());
 }
+function isTextPart(value) {
+  return hasObjectShape(value) && typeof value.value === "string";
+}
+function isDataPart(value) {
+  return hasObjectShape(value) && typeof value.mimeType === "string" && value.data instanceof Uint8Array;
+}
+function isToolCallPart(value) {
+  return hasObjectShape(value) && typeof value.callId === "string" && typeof value.name === "string" && "input" in value;
+}
+function isToolResultPart(value) {
+  return hasObjectShape(value) && typeof value.callId === "string" && Array.isArray(value.content);
+}
+function hasObjectShape(value) {
+  return typeof value === "object" && value !== null;
+}
 function safeJsonStringify(value) {
   try {
     return JSON.stringify(value);
@@ -3893,10 +3908,10 @@ function safeJsonStringify(value) {
 }
 
 // src/config.ts
-var vscode2 = __toESM(require("vscode"));
+var vscode = __toESM(require("vscode"));
 var CONFIG_SECTION = "pionus.codex";
 function getProviderConfig() {
-  const config = vscode2.workspace.getConfiguration(CONFIG_SECTION);
+  const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
   return {
     baseURL: getString(config, "baseURL", "https://chatgpt.com/backend-api/codex/responses"),
     clientVersion: getString(config, "clientVersion", "0.0.0"),
@@ -4007,8 +4022,11 @@ async function fetchAvailableModels(config, credentials, token) {
 }
 function buildProviderModels(config, upstreamModels) {
   const models = upstreamModels.flatMap((model) => buildDiscoveredModel(model, config));
-  const resolvedModels = models.length > 0 ? models : [buildFallbackModel(config)];
-  return ensureFastVariants(resolvedModels);
+  if (models.length > 0) {
+    return models;
+  }
+  const fallbackModel = buildFallbackModel(config);
+  return [fallbackModel, createFastVariant(fallbackModel)];
 }
 function buildFallbackModel(config) {
   const reasoningEffort = MODEL_DEFAULT_REASONING[config.model];
@@ -4056,40 +4074,10 @@ function buildDiscoveredModel(model, config) {
     defaultReasoningEffort,
     serviceTier: void 0
   });
-  return [
-    baseModel,
-    buildModel({
-      config,
-      requestModel,
-      name: `${baseModel.info.name} Fast`,
-      tooltip: `${baseModel.info.tooltip ?? ""} Fast service tier.`.trim(),
-      maxInputTokens: baseModel.info.maxInputTokens,
-      version: `${baseModel.info.version}-fast`,
-      imageInput: Boolean(baseModel.info.capabilities?.imageInput),
-      reasoningOptions,
-      defaultReasoningEffort,
-      serviceTier: "fast"
-    })
-  ];
+  return supportsFastTier(model) ? [baseModel, createFastVariant(baseModel)] : [baseModel];
 }
-function ensureFastVariants(models) {
-  const result = [];
-  const seenFastIds = new Set(models.filter((model) => model.serviceTier === "fast").map((model) => model.info.id));
-  for (const model of models) {
-    result.push(model);
-    if (model.serviceTier === "fast") {
-      continue;
-    }
-    const fastId = `${PROVIDER_MODEL_ID_PREFIX}${model.requestModel}${FAST_ID_SUFFIX}`;
-    if (seenFastIds.has(fastId)) {
-      continue;
-    }
-    result.push(createFastVariant(model, fastId));
-    seenFastIds.add(fastId);
-  }
-  return result;
-}
-function createFastVariant(model, fastId) {
+function createFastVariant(model) {
+  const fastId = `${PROVIDER_MODEL_ID_PREFIX}${model.requestModel}${FAST_ID_SUFFIX}`;
   return {
     ...model,
     serviceTier: "fast",
@@ -4195,6 +4183,10 @@ function getReasoningDescription(effort) {
     case "xhigh":
       return "Extra high reasoning depth for complex problems.";
   }
+}
+function supportsFastTier(model) {
+  const candidates = [model.service_tiers, model.supported_service_tiers, model.feature_requirements];
+  return candidates.some((candidate) => JSON.stringify(candidate ?? "").toLowerCase().includes("fast"));
 }
 function buildModelDetail(maxInputTokens, reasoningOptions, defaultEffort, serviceTier) {
   const parts = [`Context: ${maxInputTokens.toLocaleString()} tokens`];
@@ -14382,9 +14374,24 @@ function isUndiciDispatcherVersionMismatchError(error) {
 }
 
 // src/responsesClient.ts
-var vscode3 = __toESM(require("vscode"));
 var OPENAI_DEFAULT_MAX_RETRIES = 2;
 var OPENAI_DEFAULT_TIMEOUT_MS = 10 * 60 * 1e3;
+var LANGUAGE_MODEL_CHAT_TOOL_MODE_REQUIRED = 2;
+function buildResponsesCreateRequest(options) {
+  const tools = options.tools?.map(convertToolToResponseTool) ?? [];
+  return {
+    model: options.model,
+    instructions: options.instructions,
+    input: options.input,
+    stream: true,
+    store: tools.length > 0 || Boolean(options.previousResponseId),
+    ...options.previousResponseId ? { previous_response_id: options.previousResponseId } : {},
+    ...options.serviceTier ? { service_tier: options.serviceTier } : {},
+    ...options.reasoning ? { reasoning: options.reasoning } : {},
+    ...tools.length > 0 ? { tools, tool_choice: mapToolChoice(options.toolMode) } : {},
+    ...options.omitMaxOutputTokens ? {} : { max_output_tokens: options.maxOutputTokens }
+  };
+}
 async function streamResponseText(options) {
   const abortController = new AbortController();
   const cancellation = options.token.onCancellationRequested(() => abortController.abort());
@@ -14399,19 +14406,7 @@ async function streamResponseText(options) {
       maxRetries: OPENAI_DEFAULT_MAX_RETRIES,
       timeout: OPENAI_DEFAULT_TIMEOUT_MS
     });
-    const tools = options.tools?.map(convertToolToResponseTool) ?? [];
-    const request = {
-      model: options.model,
-      instructions: options.instructions,
-      input: options.input,
-      stream: true,
-      store: false,
-      ...options.previousResponseId ? { previous_response_id: options.previousResponseId } : {},
-      ...options.serviceTier ? { service_tier: options.serviceTier } : {},
-      ...options.reasoning ? { reasoning: options.reasoning } : {},
-      ...tools.length > 0 ? { tools, tool_choice: mapToolChoice(options.toolMode) } : {},
-      ...options.omitMaxOutputTokens ? {} : { max_output_tokens: options.maxOutputTokens }
-    };
+    const request = buildResponsesCreateRequest(options);
     const stream = await client.responses.create(request, {
       signal: abortController.signal,
       maxRetries: OPENAI_DEFAULT_MAX_RETRIES,
@@ -14436,6 +14431,8 @@ async function streamResponseText(options) {
         const message = event.response.error?.message ?? "Responses API request failed.";
         options.onResponseFailed?.(message);
         throw new Error(message);
+      } else {
+        options.onUnhandledEvent?.(event.type);
       }
     }
   } catch (error) {
@@ -14478,7 +14475,7 @@ function convertToolToResponseTool(tool) {
   };
 }
 function mapToolChoice(toolMode) {
-  return toolMode === vscode3.LanguageModelChatToolMode.Required ? "required" : "auto";
+  return toolMode === LANGUAGE_MODEL_CHAT_TOOL_MODE_REQUIRED ? "required" : "auto";
 }
 function parseToolCallInput(argumentsJson) {
   if (!argumentsJson.trim()) {
@@ -14595,7 +14592,7 @@ async function readSecretStorageCredentials(context) {
 var import_promises2 = require("node:fs/promises");
 var import_node_os2 = require("node:os");
 var import_node_path2 = require("node:path");
-var vscode4 = __toESM(require("vscode"));
+var vscode2 = __toESM(require("vscode"));
 async function buildInstructions(config, agentProfile, extraSections = {}) {
   const parts = [config.instructions.trim()];
   if (config.includeCodexInstructions) {
@@ -14625,7 +14622,7 @@ async function discoverCodexInstructions(config) {
   if (globalInstruction) {
     contents.push(globalInstruction);
   }
-  for (const workspaceFolder of vscode4.workspace.workspaceFolders ?? []) {
+  for (const workspaceFolder of vscode2.workspace.workspaceFolders ?? []) {
     const chain = getDirectoryChain(workspaceFolder.uri.fsPath);
     for (const directory of chain) {
       const instruction = await readFirstExisting([
@@ -14678,7 +14675,7 @@ var import_promises3 = require("node:fs/promises");
 var import_node_os3 = require("node:os");
 var import_node_path3 = require("node:path");
 var toml = __toESM(require_toml());
-var vscode5 = __toESM(require("vscode"));
+var vscode3 = __toESM(require("vscode"));
 async function resolveAgentProfile(config, options) {
   if (!config.enableAgentProfiles) {
     return void 0;
@@ -14776,7 +14773,7 @@ async function readAgentProfile(filePath, outputChannel) {
   }
 }
 function getWorkspaceAgentDirectories() {
-  return vscode5.workspace.workspaceFolders?.map((folder) => (0, import_node_path3.join)(folder.uri.fsPath, ".codex", "agents")) ?? [];
+  return vscode3.workspace.workspaceFolders?.map((folder) => (0, import_node_path3.join)(folder.uri.fsPath, ".codex", "agents")) ?? [];
 }
 function expandHome(value) {
   return value === "~" ? (0, import_node_os3.homedir)() : value.startsWith("~/") ? (0, import_node_path3.join)((0, import_node_os3.homedir)(), value.slice(2)) : value;
@@ -14802,15 +14799,15 @@ function normalizeReasoningEffort3(value) {
 }
 
 // src/contextCollector.ts
-var vscode6 = __toESM(require("vscode"));
+var vscode4 = __toESM(require("vscode"));
 function collectContextSnapshot(config) {
-  const activeEditor = vscode6.window.activeTextEditor;
+  const activeEditor = vscode4.window.activeTextEditor;
   const selectedText = activeEditor && !activeEditor.selection.isEmpty ? truncateByBytes2(activeEditor.document.getText(activeEditor.selection), config.ideContextMaxSelectionBytes) : void 0;
   return {
-    workspaceFolders: vscode6.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [],
+    workspaceFolders: vscode4.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [],
     activeFile: activeEditor ? formatUri(activeEditor.document.uri) : void 0,
     selectedText,
-    visibleFiles: unique(vscode6.window.visibleTextEditors.map((editor) => formatUri(editor.document.uri)))
+    visibleFiles: unique(vscode4.window.visibleTextEditors.map((editor) => formatUri(editor.document.uri)))
   };
 }
 function formatContextSnapshot(snapshot) {
@@ -14826,7 +14823,7 @@ ${snapshot.selectedText.trim()}`);
   return parts.join("\n");
 }
 function getPrimaryWorkspaceFolder() {
-  return vscode6.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  return vscode4.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 function formatUri(uri) {
   return uri.scheme === "file" ? uri.fsPath : uri.toString(true);
@@ -14944,7 +14941,7 @@ var CodexModelProvider = class {
     this.onDidChangeLanguageModelChatInformation = this.modelInfoChangedEmitter.event;
     this.context.subscriptions.push(
       this.modelInfoChangedEmitter,
-      vscode7.workspace.onDidChangeConfiguration((event) => {
+      vscode5.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration(getConfigurationSection())) {
           this.cachedModels = void 0;
           this.modelInfoChangedEmitter.fire();
@@ -14953,9 +14950,10 @@ var CodexModelProvider = class {
     );
   }
   onDidChangeLanguageModelChatInformation;
-  modelInfoChangedEmitter = new vscode7.EventEmitter();
+  modelInfoChangedEmitter = new vscode5.EventEmitter();
   cachedModels;
   lastResponseId;
+  pendingToolCallIds = /* @__PURE__ */ new Set();
   async provideLanguageModelChatInformation(options, token) {
     const config = getProviderConfig();
     const credentials = await getApiCredentials(this.context);
@@ -14986,64 +14984,147 @@ var CodexModelProvider = class {
     const ideContext = config.includeIdeContext ? formatContextSnapshot(collectContextSnapshot(config)) : void 0;
     const instructions = await buildInstructions(config, agentProfile, { ideContext, skillInstructions });
     const input = convertMessagesToResponsesInput(messages, Boolean(model.capabilities?.imageInput) && config.enableImageInput);
+    const toolContinuation = getToolContinuationInput(input, this.pendingToolCallIds, this.lastResponseId);
+    const requestInput = toolContinuation?.input ?? input;
+    const previousResponseId = toolContinuation?.previousResponseId ?? (config.enablePreviousResponseId ? this.lastResponseId : void 0);
+    const responseToolCallIds = /* @__PURE__ */ new Set();
     const requestStartedAt = Date.now();
-    this.outputChannel.info("provideLanguageModelChatResponse start", {
+    const requestLogContext = {
       modelId: model.id,
       requestModel: parsedModel.requestModel,
       serviceTier: parsedModel.serviceTier ?? "normal",
       reasoningEffort: reasoningEffort ?? null,
       agentProfile: agentProfile?.id ?? null,
       toolCount: options.tools?.length ?? 0,
-      credentialSource: credentials.source
+      credentialSource: credentials.source,
+      startedAt: requestStartedAt
+    };
+    const streamLogState = {
+      textDeltaCount: 0,
+      textCharCount: 0,
+      reasoningDeltaCount: 0,
+      reasoningCharCount: 0,
+      toolCallCount: 0,
+      completed: false
+    };
+    const unhandledEventTypes = /* @__PURE__ */ new Set();
+    this.outputChannel.info("provideLanguageModelChatResponse start", {
+      ...toLogPayload(requestLogContext, streamLogState),
+      inputItemCount: requestInput.length,
+      originalInputItemCount: input.length,
+      previousResponseId: previousResponseId ?? null,
+      toolContinuation: Boolean(toolContinuation)
     });
-    await streamResponseText({
-      baseURL: config.baseURL,
-      apiKey: credentials.apiKey,
-      headers: credentials.headers,
-      omitMaxOutputTokens: credentials.omitMaxOutputTokens,
-      model: agentProfile?.model ?? parsedModel.requestModel,
-      instructions,
-      serviceTier: getRequestServiceTier(parsedModel.serviceTier),
-      input,
-      tools: options.tools,
-      toolMode: options.toolMode,
-      reasoning: reasoningEffort ? { effort: reasoningEffort } : agentProfile?.reasoningEffort ? { effort: agentProfile.reasoningEffort } : void 0,
-      maxOutputTokens: config.maxOutputTokens,
-      previousResponseId: config.enablePreviousResponseId ? this.lastResponseId : void 0,
-      token,
-      onTextDelta: (text) => progress.report(new vscode7.LanguageModelTextPart(text)),
-      onReasoningTextDelta: (text) => {
-        const thinkingPart = createThinkingPart(text);
-        if (thinkingPart) {
-          progress.report(thinkingPart);
+    try {
+      await streamResponseText({
+        baseURL: config.baseURL,
+        apiKey: credentials.apiKey,
+        headers: credentials.headers,
+        omitMaxOutputTokens: credentials.omitMaxOutputTokens,
+        model: agentProfile?.model ?? parsedModel.requestModel,
+        instructions,
+        serviceTier: getRequestServiceTier(parsedModel.serviceTier),
+        input: requestInput,
+        tools: options.tools,
+        toolMode: options.toolMode,
+        reasoning: reasoningEffort ? { effort: reasoningEffort } : agentProfile?.reasoningEffort ? { effort: agentProfile.reasoningEffort } : void 0,
+        maxOutputTokens: config.maxOutputTokens,
+        previousResponseId,
+        token,
+        onTextDelta: (text) => {
+          streamLogState.textDeltaCount += 1;
+          streamLogState.textCharCount += text.length;
+          streamLogState.lastEventAt = Date.now();
+          progress.report(new vscode5.LanguageModelTextPart(text));
+        },
+        onReasoningTextDelta: (text) => {
+          streamLogState.reasoningDeltaCount += 1;
+          streamLogState.reasoningCharCount += text.length;
+          streamLogState.lastEventAt = Date.now();
+          const thinkingPart = createThinkingPart(text);
+          if (thinkingPart) {
+            progress.report(thinkingPart);
+          }
+        },
+        onToolCall: (callId, name, input2) => {
+          streamLogState.toolCallCount += 1;
+          streamLogState.lastEventAt = Date.now();
+          responseToolCallIds.add(callId);
+          this.outputChannel.info("response tool call received", {
+            ...toLogPayload(requestLogContext, streamLogState),
+            callId,
+            toolName: name,
+            inputKeys: Object.keys(input2).slice(0, 20)
+          });
+          progress.report(new vscode5.LanguageModelToolCallPart(callId, name, input2));
+        },
+        onResponseCreated: (response) => {
+          streamLogState.responseId = response.id;
+          streamLogState.createdStatus = response.status;
+          streamLogState.createdServiceTier = response.service_tier;
+          streamLogState.lastEventAt = Date.now();
+          this.outputChannel.info("response created", {
+            ...toLogPayload(requestLogContext, streamLogState),
+            responseId: response.id,
+            status: response.status,
+            serviceTier: response.service_tier ?? null
+          });
+          if (response.id) {
+            this.lastResponseId = response.id;
+          }
+        },
+        onResponseCompleted: (response) => {
+          streamLogState.completed = true;
+          streamLogState.responseId = response.id ?? streamLogState.responseId;
+          streamLogState.lastEventAt = Date.now();
+          this.outputChannel.info("response completed", {
+            ...toLogPayload(requestLogContext, streamLogState),
+            responseId: response.id,
+            usage: response.usage ?? null
+          });
+          if (response.id) {
+            this.lastResponseId = response.id;
+          }
+          const usagePart = createUsageDataPart(response.usage);
+          if (usagePart) {
+            progress.report(usagePart);
+          }
+          if (response.usage) {
+            this.usageSink?.record({ model: parsedModel.requestModel, usage: response.usage, completedAt: Date.now() });
+          }
+          this.pendingToolCallIds = responseToolCallIds;
+        },
+        onResponseFailed: (message) => {
+          streamLogState.lastEventAt = Date.now();
+          this.outputChannel.error("response failed event", {
+            ...toLogPayload(requestLogContext, streamLogState),
+            message
+          });
+        },
+        onUnhandledEvent: (eventType) => {
+          streamLogState.lastEventAt = Date.now();
+          if (unhandledEventTypes.has(eventType)) {
+            return;
+          }
+          unhandledEventTypes.add(eventType);
+          this.outputChannel.debug("response stream event ignored", {
+            ...toLogPayload(requestLogContext, streamLogState),
+            eventType
+          });
         }
-      },
-      onToolCall: (callId, name, input2) => progress.report(new vscode7.LanguageModelToolCallPart(callId, name, input2)),
-      onResponseCreated: (response) => {
-        if (response.id) {
-          this.lastResponseId = response.id;
-        }
-      },
-      onResponseCompleted: (response) => {
-        this.outputChannel.info("response completed", {
-          requestModel: parsedModel.requestModel,
-          responseId: response.id,
-          durationMs: Date.now() - requestStartedAt,
-          usage: response.usage ?? null
-        });
-        if (response.id) {
-          this.lastResponseId = response.id;
-        }
-        const usagePart = createUsageDataPart(response.usage);
-        if (usagePart) {
-          progress.report(usagePart);
-        }
-        if (response.usage) {
-          this.usageSink?.record({ model: parsedModel.requestModel, usage: response.usage, completedAt: Date.now() });
-        }
-      },
-      onResponseFailed: (message) => this.outputChannel.error(`response failed model=${parsedModel.requestModel} message=${message}`)
-    });
+      });
+    } catch (error) {
+      this.outputChannel.error("provideLanguageModelChatResponse error", {
+        ...toLogPayload(requestLogContext, streamLogState),
+        error: describeError(error)
+      });
+      throw error;
+    }
+    if (token.isCancellationRequested) {
+      this.outputChannel.warn("response cancelled", toLogPayload(requestLogContext, streamLogState));
+    } else if (!streamLogState.completed) {
+      this.outputChannel.warn("response stream ended without completed event", toLogPayload(requestLogContext, streamLogState));
+    }
   }
   async provideTokenCount(model, text, token) {
     const config = getProviderConfig();
@@ -15070,7 +15151,7 @@ var CodexModelProvider = class {
     const config = getProviderConfig();
     const credentials = await getApiCredentials(this.context);
     const agentProfile = await resolveAgentProfile(config, { hasTools: false, outputChannel: this.outputChannel });
-    await vscode7.window.showInformationMessage([
+    await vscode5.window.showInformationMessage([
       `Pionus Codex: ${credentials ? `credentials from ${credentials.source}` : "credentials missing"}`,
       `model ${config.model}`,
       `agent ${agentProfile?.id ?? "none"}`
@@ -15092,11 +15173,11 @@ var CodexModelProvider = class {
     return models;
   }
   async promptForCredentials() {
-    const action = await vscode7.window.showWarningMessage("Pionus Codex needs Codex credentials. Set an API key or add credentials to ~/.codex/auth.json.", "Set API Key", "Open Settings");
+    const action = await vscode5.window.showWarningMessage("Pionus Codex needs Codex credentials. Set an API key or add credentials to ~/.codex/auth.json.", "Set API Key", "Open Settings");
     if (action === "Set API Key") {
-      await vscode7.commands.executeCommand("pionus.codex.setApiKey");
+      await vscode5.commands.executeCommand("pionus.codex.setApiKey");
     } else if (action === "Open Settings") {
-      await vscode7.commands.executeCommand("pionus.codex.openSettings");
+      await vscode5.commands.executeCommand("pionus.codex.openSettings");
     }
   }
 };
@@ -15106,6 +15187,20 @@ function getRequestServiceTier(serviceTier) {
   }
   return void 0;
 }
+function getToolContinuationInput(input, pendingToolCallIds, previousResponseId) {
+  if (!previousResponseId || pendingToolCallIds.size === 0) {
+    return void 0;
+  }
+  const toolOutputs = input.filter((item) => isFunctionCallOutputForPendingCall(item, pendingToolCallIds));
+  return toolOutputs.length > 0 ? { input: toolOutputs, previousResponseId } : void 0;
+}
+function isFunctionCallOutputForPendingCall(item, pendingToolCallIds) {
+  if (!item || typeof item !== "object") {
+    return false;
+  }
+  const candidate = item;
+  return candidate.type === "function_call_output" && typeof candidate.call_id === "string" && pendingToolCallIds.has(candidate.call_id);
+}
 function getReasoningEffort(selectedReasoningEffort, options, defaultReasoningEffort) {
   return normalizeReasoningEffort(options.modelConfiguration?.reasoningEffort ?? options.configuration?.reasoningEffort) ?? normalizeReasoningEffort(options.modelOptions?.reasoningEffort) ?? normalizeReasoningEffort(options.modelOptions?.reasoning?.effort) ?? defaultReasoningEffort ?? selectedReasoningEffort;
 }
@@ -15113,14 +15208,14 @@ function supportsOfficialTokenCounting(baseURL) {
   return !normalizeBaseURL(baseURL).toLowerCase().includes("chatgpt.com/backend-api/codex");
 }
 function createThinkingPart(text) {
-  const ThinkingPart = vscode7.LanguageModelThinkingPart;
+  const ThinkingPart = vscode5.LanguageModelThinkingPart;
   return typeof ThinkingPart === "function" ? new ThinkingPart(text) : void 0;
 }
 function createUsageDataPart(usage) {
   if (!usage) {
     return void 0;
   }
-  return vscode7.LanguageModelDataPart.json({
+  return vscode5.LanguageModelDataPart.json({
     prompt_tokens: usage.input_tokens ?? 0,
     completion_tokens: usage.output_tokens ?? 0,
     total_tokens: usage.total_tokens ?? 0,
@@ -15128,13 +15223,68 @@ function createUsageDataPart(usage) {
     completion_tokens_details: { reasoning_tokens: usage.output_tokens_details?.reasoning_tokens ?? 0 }
   }, USAGE_DATA_PART_MIME2);
 }
+function toLogPayload(context, state) {
+  const now = Date.now();
+  return {
+    modelId: context.modelId,
+    requestModel: context.requestModel,
+    serviceTier: context.serviceTier,
+    reasoningEffort: context.reasoningEffort,
+    agentProfile: context.agentProfile,
+    toolCount: context.toolCount,
+    credentialSource: context.credentialSource,
+    responseId: state.responseId ?? null,
+    createdStatus: state.createdStatus ?? null,
+    createdServiceTier: state.createdServiceTier ?? null,
+    durationMs: now - context.startedAt,
+    idleMs: state.lastEventAt ? now - state.lastEventAt : null,
+    textDeltaCount: state.textDeltaCount,
+    textCharCount: state.textCharCount,
+    reasoningDeltaCount: state.reasoningDeltaCount,
+    reasoningCharCount: state.reasoningCharCount,
+    toolCallCount: state.toolCallCount,
+    completed: state.completed
+  };
+}
+function describeError(error) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      cause: describeCause(error.cause)
+    };
+  }
+  return { name: typeof error, message: String(error) };
+}
+function describeCause(cause) {
+  if (!cause) {
+    return null;
+  }
+  if (cause instanceof Error) {
+    return {
+      name: cause.name,
+      message: cause.message,
+      stack: cause.stack,
+      cause: describeCause(cause.cause)
+    };
+  }
+  return typeof cause === "object" ? safeJsonStringify2(cause) : String(cause);
+}
+function safeJsonStringify2(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
+}
 
 // src/usageStatus.ts
-var vscode8 = __toESM(require("vscode"));
+var vscode6 = __toESM(require("vscode"));
 var UsageStatusBar = class {
   constructor(context) {
     this.context = context;
-    this.statusBar = vscode8.window.createStatusBarItem(vscode8.StatusBarAlignment.Right, 88);
+    this.statusBar = vscode6.window.createStatusBarItem(vscode6.StatusBarAlignment.Right, 88);
     this.statusBar.command = "pionus.codex.showLastUsage";
     context.subscriptions.push(this.statusBar);
   }
@@ -15148,11 +15298,11 @@ var UsageStatusBar = class {
   }
   async showLastUsage() {
     if (!this.lastUsage) {
-      await vscode8.window.showInformationMessage("No Codex usage recorded yet.");
+      await vscode6.window.showInformationMessage("No Codex usage recorded yet.");
       return;
     }
     const usage = this.lastUsage.usage;
-    await vscode8.window.showInformationMessage(`Codex usage: input ${usage.input_tokens ?? 0}, output ${usage.output_tokens ?? 0}, total ${usage.total_tokens ?? 0}.`);
+    await vscode6.window.showInformationMessage(`Codex usage: input ${usage.input_tokens ?? 0}, output ${usage.output_tokens ?? 0}, total ${usage.total_tokens ?? 0}.`);
   }
   dispose() {
     this.statusBar.dispose();
@@ -15225,40 +15375,40 @@ function getReviewTargetArgs(request) {
 
 // src/extension.ts
 function activate(context) {
-  const outputChannel = vscode9.window.createOutputChannel("Pionus Codex Provider", { log: true });
+  const outputChannel = vscode7.window.createOutputChannel("Pionus Codex Provider", { log: true });
   const usageStatusBar = new UsageStatusBar(context);
   const provider = new CodexModelProvider(context, outputChannel, usageStatusBar);
   context.subscriptions.push(
     outputChannel,
     usageStatusBar,
-    vscode9.lm.registerLanguageModelChatProvider("pionus-codex", provider),
-    vscode9.commands.registerCommand("pionus.codex.openDebugLogs", () => outputChannel.show(true)),
-    vscode9.commands.registerCommand("pionus.codex.openSettings", () => vscode9.commands.executeCommand("workbench.action.openSettings", getConfigurationSection())),
-    vscode9.commands.registerCommand("pionus.codex.setApiKey", async () => {
-      const apiKey = await vscode9.window.showInputBox({ title: "Set Codex API Key", prompt: "Enter your API key", password: true, ignoreFocusOut: true });
+    vscode7.lm.registerLanguageModelChatProvider("pionus-codex", provider),
+    vscode7.commands.registerCommand("pionus.codex.openDebugLogs", () => outputChannel.show(true)),
+    vscode7.commands.registerCommand("pionus.codex.openSettings", () => vscode7.commands.executeCommand("workbench.action.openSettings", getConfigurationSection())),
+    vscode7.commands.registerCommand("pionus.codex.setApiKey", async () => {
+      const apiKey = await vscode7.window.showInputBox({ title: "Set Codex API Key", prompt: "Enter your API key", password: true, ignoreFocusOut: true });
       if (apiKey?.trim()) {
         await setApiKey(context, apiKey.trim());
-        await vscode9.window.showInformationMessage("Pionus Codex API key saved.");
+        await vscode7.window.showInformationMessage("Pionus Codex API key saved.");
       }
     }),
-    vscode9.commands.registerCommand("pionus.codex.clearApiKey", async () => {
+    vscode7.commands.registerCommand("pionus.codex.clearApiKey", async () => {
       await clearApiKey(context);
-      await vscode9.window.showInformationMessage("Pionus Codex API key cleared.");
+      await vscode7.window.showInformationMessage("Pionus Codex API key cleared.");
     }),
-    vscode9.commands.registerCommand("pionus.codex.selectAgentProfile", async () => selectAgentProfile(outputChannel)),
-    vscode9.commands.registerCommand("pionus.codex.resetAgentProfile", () => setActiveAgentProfile(null)),
-    vscode9.commands.registerCommand("pionus.codex.copyContextSnapshot", copyContextSnapshot),
-    vscode9.commands.registerCommand("pionus.codex.selectSkills", async () => selectSkills(context, outputChannel)),
-    vscode9.commands.registerCommand("pionus.codex.clearSkills", async () => {
+    vscode7.commands.registerCommand("pionus.codex.selectAgentProfile", async () => selectAgentProfile(outputChannel)),
+    vscode7.commands.registerCommand("pionus.codex.resetAgentProfile", () => setActiveAgentProfile(null)),
+    vscode7.commands.registerCommand("pionus.codex.copyContextSnapshot", copyContextSnapshot),
+    vscode7.commands.registerCommand("pionus.codex.selectSkills", async () => selectSkills(context, outputChannel)),
+    vscode7.commands.registerCommand("pionus.codex.clearSkills", async () => {
       await clearActiveSkillIds(context);
-      await vscode9.window.showInformationMessage("Pionus Codex skills cleared.");
+      await vscode7.window.showInformationMessage("Pionus Codex skills cleared.");
     }),
-    vscode9.commands.registerCommand("pionus.codex.runCliExec", runCliExec),
-    vscode9.commands.registerCommand("pionus.codex.runCliReview", runCliReview),
-    vscode9.commands.registerCommand("pionus.codex.showStatus", () => provider.showStatus()),
-    vscode9.commands.registerCommand("pionus.codex.showLastUsage", () => usageStatusBar.showLastUsage()),
-    vscode9.commands.registerCommand("pionus.codex.manage", async () => {
-      const action = await vscode9.window.showQuickPick([
+    vscode7.commands.registerCommand("pionus.codex.runCliExec", runCliExec),
+    vscode7.commands.registerCommand("pionus.codex.runCliReview", runCliReview),
+    vscode7.commands.registerCommand("pionus.codex.showStatus", () => provider.showStatus()),
+    vscode7.commands.registerCommand("pionus.codex.showLastUsage", () => usageStatusBar.showLastUsage()),
+    vscode7.commands.registerCommand("pionus.codex.manage", async () => {
+      const action = await vscode7.window.showQuickPick([
         "Show Status",
         "View Last Usage",
         "Select Agent Profile",
@@ -15291,7 +15441,7 @@ function activate(context) {
         "Clear API Key": "pionus.codex.clearApiKey",
         "Open Settings": "pionus.codex.openSettings"
       };
-      await vscode9.commands.executeCommand(commandMap[action]);
+      await vscode7.commands.executeCommand(commandMap[action]);
     })
   );
 }
@@ -15299,7 +15449,7 @@ function deactivate() {
 }
 async function selectAgentProfile(outputChannel) {
   const profiles = await loadAgentProfiles(getProviderConfig(), outputChannel);
-  const selected = await vscode9.window.showQuickPick(profiles.map((profile) => ({
+  const selected = await vscode7.window.showQuickPick(profiles.map((profile) => ({
     label: profile.id,
     description: profile.name,
     detail: profile.description
@@ -15310,23 +15460,23 @@ async function selectAgentProfile(outputChannel) {
   await setActiveAgentProfile(selected.label);
 }
 async function setActiveAgentProfile(value) {
-  await vscode9.workspace.getConfiguration(getConfigurationSection()).update("activeAgentProfile", value, vscode9.ConfigurationTarget.Global);
-  await vscode9.window.showInformationMessage(value ? `Pionus Codex agent profile set to ${value}.` : "Pionus Codex agent profile reset to automatic selection.");
+  await vscode7.workspace.getConfiguration(getConfigurationSection()).update("activeAgentProfile", value, vscode7.ConfigurationTarget.Global);
+  await vscode7.window.showInformationMessage(value ? `Pionus Codex agent profile set to ${value}.` : "Pionus Codex agent profile reset to automatic selection.");
 }
 async function copyContextSnapshot() {
   const snapshot = formatContextSnapshot(collectContextSnapshot(getProviderConfig()));
-  await vscode9.env.clipboard.writeText(snapshot);
-  await vscode9.window.showInformationMessage("Pionus Codex IDE context snapshot copied.");
+  await vscode7.env.clipboard.writeText(snapshot);
+  await vscode7.window.showInformationMessage("Pionus Codex IDE context snapshot copied.");
 }
 async function selectSkills(context, outputChannel) {
   const config = getProviderConfig();
   const skills = await discoverSkills(config, outputChannel);
   if (skills.length === 0) {
-    await vscode9.window.showInformationMessage("No Pionus Codex skills found. Add SKILL.md files to pionus.codex.skillPaths.");
+    await vscode7.window.showInformationMessage("No Pionus Codex skills found. Add SKILL.md files to pionus.codex.skillPaths.");
     return;
   }
   const activeSkillIds = new Set(getActiveSkillIds(context));
-  const selected = await vscode9.window.showQuickPick(skills.map((skill) => ({
+  const selected = await vscode7.window.showQuickPick(skills.map((skill) => ({
     label: skill.id,
     description: skill.name,
     detail: skill.filePath,
@@ -15336,14 +15486,14 @@ async function selectSkills(context, outputChannel) {
     return;
   }
   await setActiveSkillIds(context, selected.map((item) => item.label));
-  await vscode9.window.showInformationMessage(`Pionus Codex active skills: ${selected.length}.`);
+  await vscode7.window.showInformationMessage(`Pionus Codex active skills: ${selected.length}.`);
 }
 async function runCliExec() {
   const enabled = await ensureCliBridgeEnabled();
   if (!enabled) {
     return;
   }
-  const prompt = await vscode9.window.showInputBox({
+  const prompt = await vscode7.window.showInputBox({
     title: "Run Codex CLI Exec",
     prompt: "Initial instructions for a read-only Codex CLI exec run",
     ignoreFocusOut: true
@@ -15351,9 +15501,9 @@ async function runCliExec() {
   if (!prompt?.trim()) {
     return;
   }
-  const enableSearch = await vscode9.window.showQuickPick(["No web search", "Enable web search"], { title: "Codex CLI web search" }) === "Enable web search";
-  const attachImages = await vscode9.window.showQuickPick(["No images", "Attach image files"], { title: "Codex CLI image input" }) === "Attach image files";
-  const imageUris = attachImages ? await vscode9.window.showOpenDialog({ canSelectMany: true, filters: { Images: ["png", "jpg", "jpeg", "webp", "gif"] } }) : void 0;
+  const enableSearch = await vscode7.window.showQuickPick(["No web search", "Enable web search"], { title: "Codex CLI web search" }) === "Enable web search";
+  const attachImages = await vscode7.window.showQuickPick(["No images", "Attach image files"], { title: "Codex CLI image input" }) === "Attach image files";
+  const imageUris = attachImages ? await vscode7.window.showOpenDialog({ canSelectMany: true, filters: { Images: ["png", "jpg", "jpeg", "webp", "gif"] } }) : void 0;
   const config = getProviderConfig();
   const command = buildReadOnlyCliCommand(config, {
     prompt: `${prompt.trim()}
@@ -15371,7 +15521,7 @@ async function runCliReview() {
   if (!enabled) {
     return;
   }
-  const mode = await vscode9.window.showQuickPick([
+  const mode = await vscode7.window.showQuickPick([
     { label: "Working Tree", requestMode: "working-tree" },
     { label: "Against Base Branch", requestMode: "base" },
     { label: "Commit", requestMode: "commit" }
@@ -15379,14 +15529,14 @@ async function runCliReview() {
   if (!mode) {
     return;
   }
-  const target = mode.requestMode === "working-tree" ? void 0 : await vscode9.window.showInputBox({
+  const target = mode.requestMode === "working-tree" ? void 0 : await vscode7.window.showInputBox({
     title: mode.requestMode === "base" ? "Base branch" : "Commit SHA",
     ignoreFocusOut: true
   });
   if (mode.requestMode !== "working-tree" && !target?.trim()) {
     return;
   }
-  const instructions = await vscode9.window.showInputBox({
+  const instructions = await vscode7.window.showInputBox({
     title: "Optional Codex review instructions",
     prompt: "Leave empty to use Codex defaults",
     ignoreFocusOut: true
@@ -15400,18 +15550,18 @@ async function ensureCliBridgeEnabled() {
   if (config.enableCliBridge) {
     return true;
   }
-  const action = await vscode9.window.showWarningMessage("Pionus Codex CLI bridge is disabled.", "Enable and Run", "Open Settings");
+  const action = await vscode7.window.showWarningMessage("Pionus Codex CLI bridge is disabled.", "Enable and Run", "Open Settings");
   if (action === "Enable and Run") {
-    await vscode9.workspace.getConfiguration(getConfigurationSection()).update("enableCliBridge", true, vscode9.ConfigurationTarget.Global);
+    await vscode7.workspace.getConfiguration(getConfigurationSection()).update("enableCliBridge", true, vscode7.ConfigurationTarget.Global);
     return true;
   }
   if (action === "Open Settings") {
-    await vscode9.commands.executeCommand("pionus.codex.openSettings");
+    await vscode7.commands.executeCommand("pionus.codex.openSettings");
   }
   return false;
 }
 function launchTerminal(name, executable, command, cwd) {
-  const terminal = vscode9.window.createTerminal({ name, cwd, isTransient: false });
+  const terminal = vscode7.window.createTerminal({ name, cwd, isTransient: false });
   terminal.show();
   terminal.sendText(`command -v ${executable} >/dev/null 2>&1 && ${command} || printf 'Pionus Codex: command not found: %s\\n' ${JSON.stringify(executable)}`);
 }

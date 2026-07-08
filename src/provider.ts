@@ -1,6 +1,6 @@
 import type { ResponseUsage } from 'openai/resources/responses/responses';
 import * as vscode from 'vscode';
-import { convertMessagesToResponsesInput, estimateTokenCount } from './convertMessages.js';
+import { convertMessagesToResponsesInput, estimateTokenCount, type ResponsesInputMessage } from './convertMessages.js';
 import { getConfigurationSection, getProviderConfig, normalizeReasoningEffort, type ProviderConfig, type ReasoningEffort } from './config.js';
 import { buildFallbackModel, buildProviderModels, fetchAvailableModels, parseModelIdentifier, type ResolvedProviderModel } from './models.js';
 import { countInputTokens, streamResponseText } from './responsesClient.js';
@@ -26,11 +26,36 @@ export interface UsageSink {
   record(event: { model: string; usage: ResponseUsage; completedAt: number }): void;
 }
 
+interface RequestLogContext {
+  readonly modelId: string;
+  readonly requestModel: string;
+  readonly serviceTier: string;
+  readonly reasoningEffort: ReasoningEffort | null;
+  readonly agentProfile: string | null;
+  readonly toolCount: number;
+  readonly credentialSource: string;
+  readonly startedAt: number;
+}
+
+interface StreamLogState {
+  responseId?: string;
+  createdStatus?: string;
+  createdServiceTier?: string | null;
+  textDeltaCount: number;
+  textCharCount: number;
+  reasoningDeltaCount: number;
+  reasoningCharCount: number;
+  toolCallCount: number;
+  lastEventAt?: number;
+  completed: boolean;
+}
+
 export class CodexModelProvider implements vscode.LanguageModelChatProvider {
   readonly onDidChangeLanguageModelChatInformation: vscode.Event<void>;
   private readonly modelInfoChangedEmitter = new vscode.EventEmitter<void>();
   private cachedModels?: { key: string; expiresAt: number; models: ResolvedProviderModel[] };
   private lastResponseId?: string;
+  private pendingToolCallIds = new Set<string>();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -92,66 +117,150 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
     const ideContext = config.includeIdeContext ? formatContextSnapshot(collectContextSnapshot(config)) : undefined;
     const instructions = await buildInstructions(config, agentProfile, { ideContext, skillInstructions });
     const input = convertMessagesToResponsesInput(messages, Boolean(model.capabilities?.imageInput) && config.enableImageInput);
+    const toolContinuation = getToolContinuationInput(input, this.pendingToolCallIds, this.lastResponseId);
+    const requestInput = toolContinuation?.input ?? input;
+    const previousResponseId = toolContinuation?.previousResponseId ?? (config.enablePreviousResponseId ? this.lastResponseId : undefined);
+    const responseToolCallIds = new Set<string>();
     const requestStartedAt = Date.now();
-
-    this.outputChannel.info('provideLanguageModelChatResponse start', {
+    const requestLogContext: RequestLogContext = {
       modelId: model.id,
       requestModel: parsedModel.requestModel,
       serviceTier: parsedModel.serviceTier ?? 'normal',
       reasoningEffort: reasoningEffort ?? null,
       agentProfile: agentProfile?.id ?? null,
       toolCount: options.tools?.length ?? 0,
-      credentialSource: credentials.source
+      credentialSource: credentials.source,
+      startedAt: requestStartedAt
+    };
+    const streamLogState: StreamLogState = {
+      textDeltaCount: 0,
+      textCharCount: 0,
+      reasoningDeltaCount: 0,
+      reasoningCharCount: 0,
+      toolCallCount: 0,
+      completed: false
+    };
+    const unhandledEventTypes = new Set<string>();
+
+    this.outputChannel.info('provideLanguageModelChatResponse start', {
+      ...toLogPayload(requestLogContext, streamLogState),
+      inputItemCount: requestInput.length,
+      originalInputItemCount: input.length,
+      previousResponseId: previousResponseId ?? null,
+      toolContinuation: Boolean(toolContinuation)
     });
 
-    await streamResponseText({
-      baseURL: config.baseURL,
-      apiKey: credentials.apiKey,
-      headers: credentials.headers,
-      omitMaxOutputTokens: credentials.omitMaxOutputTokens,
-      model: agentProfile?.model ?? parsedModel.requestModel,
-      instructions,
-      serviceTier: getRequestServiceTier(parsedModel.serviceTier),
-      input,
-      tools: options.tools,
-      toolMode: options.toolMode,
-      reasoning: reasoningEffort ? { effort: reasoningEffort } : agentProfile?.reasoningEffort ? { effort: agentProfile.reasoningEffort } : undefined,
-      maxOutputTokens: config.maxOutputTokens,
-      previousResponseId: config.enablePreviousResponseId ? this.lastResponseId : undefined,
-      token,
-      onTextDelta: (text) => progress.report(new vscode.LanguageModelTextPart(text)),
-      onReasoningTextDelta: (text) => {
-        const thinkingPart = createThinkingPart(text);
-        if (thinkingPart) {
-          progress.report(thinkingPart);
+    try {
+      await streamResponseText({
+        baseURL: config.baseURL,
+        apiKey: credentials.apiKey,
+        headers: credentials.headers,
+        omitMaxOutputTokens: credentials.omitMaxOutputTokens,
+        model: agentProfile?.model ?? parsedModel.requestModel,
+        instructions,
+        serviceTier: getRequestServiceTier(parsedModel.serviceTier),
+        input: requestInput,
+        tools: options.tools,
+        toolMode: options.toolMode,
+        reasoning: reasoningEffort ? { effort: reasoningEffort } : agentProfile?.reasoningEffort ? { effort: agentProfile.reasoningEffort } : undefined,
+        maxOutputTokens: config.maxOutputTokens,
+        previousResponseId,
+        token,
+        onTextDelta: (text) => {
+          streamLogState.textDeltaCount += 1;
+          streamLogState.textCharCount += text.length;
+          streamLogState.lastEventAt = Date.now();
+          progress.report(new vscode.LanguageModelTextPart(text));
+        },
+        onReasoningTextDelta: (text) => {
+          streamLogState.reasoningDeltaCount += 1;
+          streamLogState.reasoningCharCount += text.length;
+          streamLogState.lastEventAt = Date.now();
+          const thinkingPart = createThinkingPart(text);
+          if (thinkingPart) {
+            progress.report(thinkingPart);
+          }
+        },
+        onToolCall: (callId, name, input) => {
+          streamLogState.toolCallCount += 1;
+          streamLogState.lastEventAt = Date.now();
+          responseToolCallIds.add(callId);
+          this.outputChannel.info('response tool call received', {
+            ...toLogPayload(requestLogContext, streamLogState),
+            callId,
+            toolName: name,
+            inputKeys: Object.keys(input).slice(0, 20)
+          });
+          progress.report(new vscode.LanguageModelToolCallPart(callId, name, input));
+        },
+        onResponseCreated: (response) => {
+          streamLogState.responseId = response.id;
+          streamLogState.createdStatus = response.status;
+          streamLogState.createdServiceTier = response.service_tier;
+          streamLogState.lastEventAt = Date.now();
+          this.outputChannel.info('response created', {
+            ...toLogPayload(requestLogContext, streamLogState),
+            responseId: response.id,
+            status: response.status,
+            serviceTier: response.service_tier ?? null
+          });
+          if (response.id) {
+            this.lastResponseId = response.id;
+          }
+        },
+        onResponseCompleted: (response) => {
+          streamLogState.completed = true;
+          streamLogState.responseId = response.id ?? streamLogState.responseId;
+          streamLogState.lastEventAt = Date.now();
+          this.outputChannel.info('response completed', {
+            ...toLogPayload(requestLogContext, streamLogState),
+            responseId: response.id,
+            usage: response.usage ?? null
+          });
+          if (response.id) {
+            this.lastResponseId = response.id;
+          }
+          const usagePart = createUsageDataPart(response.usage);
+          if (usagePart) {
+            progress.report(usagePart);
+          }
+          if (response.usage) {
+            this.usageSink?.record({ model: parsedModel.requestModel, usage: response.usage, completedAt: Date.now() });
+          }
+          this.pendingToolCallIds = responseToolCallIds;
+        },
+        onResponseFailed: (message) => {
+          streamLogState.lastEventAt = Date.now();
+          this.outputChannel.error('response failed event', {
+            ...toLogPayload(requestLogContext, streamLogState),
+            message
+          });
+        },
+        onUnhandledEvent: (eventType) => {
+          streamLogState.lastEventAt = Date.now();
+          if (unhandledEventTypes.has(eventType)) {
+            return;
+          }
+          unhandledEventTypes.add(eventType);
+          this.outputChannel.debug('response stream event ignored', {
+            ...toLogPayload(requestLogContext, streamLogState),
+            eventType
+          });
         }
-      },
-      onToolCall: (callId, name, input) => progress.report(new vscode.LanguageModelToolCallPart(callId, name, input)),
-      onResponseCreated: (response) => {
-        if (response.id) {
-          this.lastResponseId = response.id;
-        }
-      },
-      onResponseCompleted: (response) => {
-        this.outputChannel.info('response completed', {
-          requestModel: parsedModel.requestModel,
-          responseId: response.id,
-          durationMs: Date.now() - requestStartedAt,
-          usage: response.usage ?? null
-        });
-        if (response.id) {
-          this.lastResponseId = response.id;
-        }
-        const usagePart = createUsageDataPart(response.usage);
-        if (usagePart) {
-          progress.report(usagePart);
-        }
-        if (response.usage) {
-          this.usageSink?.record({ model: parsedModel.requestModel, usage: response.usage, completedAt: Date.now() });
-        }
-      },
-      onResponseFailed: (message) => this.outputChannel.error(`response failed model=${parsedModel.requestModel} message=${message}`)
-    });
+      });
+    } catch (error) {
+      this.outputChannel.error('provideLanguageModelChatResponse error', {
+        ...toLogPayload(requestLogContext, streamLogState),
+        error: describeError(error)
+      });
+      throw error;
+    }
+
+    if (token.isCancellationRequested) {
+      this.outputChannel.warn('response cancelled', toLogPayload(requestLogContext, streamLogState));
+    } else if (!streamLogState.completed) {
+      this.outputChannel.warn('response stream ended without completed event', toLogPayload(requestLogContext, streamLogState));
+    }
   }
 
   async provideTokenCount(
@@ -226,6 +335,25 @@ function getRequestServiceTier(serviceTier: 'fast' | undefined): 'priority' | un
   return undefined;
 }
 
+function getToolContinuationInput(input: ResponsesInputMessage[], pendingToolCallIds: Set<string>, previousResponseId: string | undefined): { input: ResponsesInputMessage[]; previousResponseId: string } | undefined {
+  if (!previousResponseId || pendingToolCallIds.size === 0) {
+    return undefined;
+  }
+
+  const toolOutputs = input.filter((item) => isFunctionCallOutputForPendingCall(item, pendingToolCallIds));
+  return toolOutputs.length > 0 ? { input: toolOutputs, previousResponseId } : undefined;
+}
+
+function isFunctionCallOutputForPendingCall(item: ResponsesInputMessage, pendingToolCallIds: Set<string>): boolean {
+  if (!item || typeof item !== 'object') {
+    return false;
+  }
+  const candidate = item as { type?: unknown; call_id?: unknown };
+  return candidate.type === 'function_call_output'
+    && typeof candidate.call_id === 'string'
+    && pendingToolCallIds.has(candidate.call_id);
+}
+
 function getReasoningEffort(selectedReasoningEffort: ReasoningEffort | undefined, options: RuntimeProvideLanguageModelChatResponseOptions, defaultReasoningEffort: ReasoningEffort | undefined): ReasoningEffort | undefined {
   return normalizeReasoningEffort(options.modelConfiguration?.reasoningEffort ?? options.configuration?.reasoningEffort)
     ?? normalizeReasoningEffort(options.modelOptions?.reasoningEffort)
@@ -254,4 +382,63 @@ function createUsageDataPart(usage: ResponseUsage | null | undefined): vscode.La
     prompt_tokens_details: { cached_tokens: usage.input_tokens_details?.cached_tokens ?? 0 },
     completion_tokens_details: { reasoning_tokens: usage.output_tokens_details?.reasoning_tokens ?? 0 }
   }, USAGE_DATA_PART_MIME) as vscode.LanguageModelResponsePart;
+}
+
+function toLogPayload(context: RequestLogContext, state: StreamLogState): Record<string, unknown> {
+  const now = Date.now();
+  return {
+    modelId: context.modelId,
+    requestModel: context.requestModel,
+    serviceTier: context.serviceTier,
+    reasoningEffort: context.reasoningEffort,
+    agentProfile: context.agentProfile,
+    toolCount: context.toolCount,
+    credentialSource: context.credentialSource,
+    responseId: state.responseId ?? null,
+    createdStatus: state.createdStatus ?? null,
+    createdServiceTier: state.createdServiceTier ?? null,
+    durationMs: now - context.startedAt,
+    idleMs: state.lastEventAt ? now - state.lastEventAt : null,
+    textDeltaCount: state.textDeltaCount,
+    textCharCount: state.textCharCount,
+    reasoningDeltaCount: state.reasoningDeltaCount,
+    reasoningCharCount: state.reasoningCharCount,
+    toolCallCount: state.toolCallCount,
+    completed: state.completed
+  };
+}
+
+function describeError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      cause: describeCause(error.cause)
+    };
+  }
+  return { name: typeof error, message: String(error) };
+}
+
+function describeCause(cause: unknown): Record<string, unknown> | string | null {
+  if (!cause) {
+    return null;
+  }
+  if (cause instanceof Error) {
+    return {
+      name: cause.name,
+      message: cause.message,
+      stack: cause.stack,
+      cause: describeCause(cause.cause)
+    };
+  }
+  return typeof cause === 'object' ? safeJsonStringify(cause) : String(cause);
+}
+
+function safeJsonStringify(value: object): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
 }

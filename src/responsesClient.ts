@@ -1,12 +1,13 @@
 import OpenAI, { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, InternalServerError, RateLimitError } from 'openai';
 import type { FunctionTool, ResponseUsage, ToolChoiceOptions } from 'openai/resources/responses/responses';
 import type { Reasoning } from 'openai/resources/shared';
-import * as vscode from 'vscode';
+import type * as vscode from 'vscode';
 import type { ResponsesInputMessage } from './convertMessages.js';
 import { normalizeBaseURL } from './urlUtils.js';
 
 const OPENAI_DEFAULT_MAX_RETRIES = 2;
 const OPENAI_DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+const LANGUAGE_MODEL_CHAT_TOOL_MODE_REQUIRED = 2;
 
 export interface StreamResponseTextOptions {
   baseURL: string;
@@ -29,6 +30,7 @@ export interface StreamResponseTextOptions {
   onResponseCreated?: (response: { id?: string; status?: string; service_tier?: string | null }) => void;
   onResponseCompleted?: (response: { id?: string; usage?: ResponseUsage | null }) => void;
   onResponseFailed?: (message: string) => void;
+  onUnhandledEvent?: (eventType: string) => void;
 }
 
 export interface CountInputTokensOptions {
@@ -38,6 +40,24 @@ export interface CountInputTokensOptions {
   model: string;
   input: string | ResponsesInputMessage[];
   token: vscode.CancellationToken;
+}
+
+export type ResponsesCreateRequest = ReturnType<typeof buildResponsesCreateRequest>;
+
+export function buildResponsesCreateRequest(options: Omit<StreamResponseTextOptions, 'baseURL' | 'apiKey' | 'headers' | 'token' | 'onTextDelta' | 'onReasoningTextDelta' | 'onToolCall' | 'onResponseCreated' | 'onResponseCompleted' | 'onResponseFailed'>) {
+  const tools = options.tools?.map(convertToolToResponseTool) ?? [];
+  return {
+    model: options.model,
+    instructions: options.instructions,
+    input: options.input,
+    stream: true,
+    store: tools.length > 0 || Boolean(options.previousResponseId),
+    ...(options.previousResponseId ? { previous_response_id: options.previousResponseId } : {}),
+    ...(options.serviceTier ? { service_tier: options.serviceTier } : {}),
+    ...(options.reasoning ? { reasoning: options.reasoning } : {}),
+    ...(tools.length > 0 ? { tools, tool_choice: mapToolChoice(options.toolMode) } : {}),
+    ...(options.omitMaxOutputTokens ? {} : { max_output_tokens: options.maxOutputTokens })
+  } as const;
 }
 
 export async function streamResponseText(options: StreamResponseTextOptions): Promise<void> {
@@ -56,19 +76,7 @@ export async function streamResponseText(options: StreamResponseTextOptions): Pr
       timeout: OPENAI_DEFAULT_TIMEOUT_MS
     });
 
-    const tools = options.tools?.map(convertToolToResponseTool) ?? [];
-    const request = {
-      model: options.model,
-      instructions: options.instructions,
-      input: options.input,
-      stream: true,
-      store: false,
-      ...(options.previousResponseId ? { previous_response_id: options.previousResponseId } : {}),
-      ...(options.serviceTier ? { service_tier: options.serviceTier } : {}),
-      ...(options.reasoning ? { reasoning: options.reasoning } : {}),
-      ...(tools.length > 0 ? { tools, tool_choice: mapToolChoice(options.toolMode) } : {}),
-      ...(options.omitMaxOutputTokens ? {} : { max_output_tokens: options.maxOutputTokens })
-    } as const;
+    const request = buildResponsesCreateRequest(options);
 
     const stream = await client.responses.create(request, {
       signal: abortController.signal,
@@ -95,6 +103,8 @@ export async function streamResponseText(options: StreamResponseTextOptions): Pr
         const message = event.response.error?.message ?? 'Responses API request failed.';
         options.onResponseFailed?.(message);
         throw new Error(message);
+      } else {
+        options.onUnhandledEvent?.(event.type);
       }
     }
   } catch (error) {
@@ -140,7 +150,7 @@ function convertToolToResponseTool(tool: vscode.LanguageModelChatTool): Function
 }
 
 function mapToolChoice(toolMode: vscode.LanguageModelChatToolMode | undefined): ToolChoiceOptions {
-  return toolMode === vscode.LanguageModelChatToolMode.Required ? 'required' : 'auto';
+  return toolMode === LANGUAGE_MODEL_CHAT_TOOL_MODE_REQUIRED ? 'required' : 'auto';
 }
 
 function parseToolCallInput(argumentsJson: string): object {

@@ -85,8 +85,12 @@ export async function fetchAvailableModels(
 
 export function buildProviderModels(config: ProviderConfig, upstreamModels: UpstreamModel[]): ResolvedProviderModel[] {
   const models = upstreamModels.flatMap((model) => buildDiscoveredModel(model, config));
-  const resolvedModels = models.length > 0 ? models : [buildFallbackModel(config)];
-  return ensureFastVariants(resolvedModels);
+  if (models.length > 0) {
+    return models;
+  }
+
+  const fallbackModel = buildFallbackModel(config);
+  return [fallbackModel, createFastVariant(fallbackModel)];
 }
 
 export function buildFallbackModel(config: ProviderConfig): ResolvedProviderModel {
@@ -140,46 +144,11 @@ function buildDiscoveredModel(model: UpstreamModel, config: ProviderConfig): Res
     serviceTier: undefined
   });
 
-  return [
-    baseModel,
-    buildModel({
-      config,
-      requestModel,
-      name: `${baseModel.info.name} Fast`,
-      tooltip: `${baseModel.info.tooltip ?? ''} Fast service tier.`.trim(),
-      maxInputTokens: baseModel.info.maxInputTokens,
-      version: `${baseModel.info.version}-fast`,
-      imageInput: Boolean(baseModel.info.capabilities?.imageInput),
-      reasoningOptions,
-      defaultReasoningEffort,
-      serviceTier: 'fast'
-    })
-  ];
+  return supportsFastTier(model) ? [baseModel, createFastVariant(baseModel)] : [baseModel];
 }
 
-function ensureFastVariants(models: ResolvedProviderModel[]): ResolvedProviderModel[] {
-  const result: ResolvedProviderModel[] = [];
-  const seenFastIds = new Set(models.filter((model) => model.serviceTier === 'fast').map((model) => model.info.id));
-
-  for (const model of models) {
-    result.push(model);
-    if (model.serviceTier === 'fast') {
-      continue;
-    }
-
-    const fastId = `${PROVIDER_MODEL_ID_PREFIX}${model.requestModel}${FAST_ID_SUFFIX}`;
-    if (seenFastIds.has(fastId)) {
-      continue;
-    }
-
-    result.push(createFastVariant(model, fastId));
-    seenFastIds.add(fastId);
-  }
-
-  return result;
-}
-
-function createFastVariant(model: ResolvedProviderModel, fastId: string): ResolvedProviderModel {
+function createFastVariant(model: ResolvedProviderModel): ResolvedProviderModel {
+  const fastId = `${PROVIDER_MODEL_ID_PREFIX}${model.requestModel}${FAST_ID_SUFFIX}`;
   return {
     ...model,
     serviceTier: 'fast',
