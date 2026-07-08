@@ -148,11 +148,6 @@
           "default": true,
           "description": "Attempt to forward supported image data parts to Codex models that advertise image input."
         },
-        "pionus.codex.enablePreviousResponseId": {
-          "type": "boolean",
-          "default": false,
-          "description": "Experimental: send previous_response_id when a stable session can be identified."
-        },
         "pionus.codex.includeIdeContext": {
           "type": "boolean",
           "default": true,

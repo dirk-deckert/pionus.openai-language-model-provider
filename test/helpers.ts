@@ -9,7 +9,6 @@ export const baseConfig = {
   defaultReasoningEffort: undefined,
   maxOutputTokens: 8192,
   enableImageInput: true,
-  enablePreviousResponseId: false,
   includeIdeContext: true,
   ideContextMaxSelectionBytes: 12000,
   includeCodexInstructions: true,

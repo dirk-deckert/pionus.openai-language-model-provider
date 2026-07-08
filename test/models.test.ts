@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { buildProviderModels, parseModelIdentifier } from '../src/models.js';
 import { baseConfig } from './helpers.js';
 
-test('buildProviderModels only offers fast variants for discovered models that advertise fast support', () => {
+test('buildProviderModels offers one entry per discovered model', () => {
   const models = buildProviderModels(baseConfig, [
     { slug: 'gpt-5.5', display_name: 'Codex 5.5', context_window: 272000, service_tiers: ['normal', 'fast'] },
     { slug: 'gpt-5.4', display_name: 'Codex 5.4', context_window: 272000 },
@@ -12,25 +12,21 @@ test('buildProviderModels only offers fast variants for discovered models that a
 
   assert.deepEqual(models.map((model) => model.info.name), [
     'Codex 5.5',
-    'Codex 5.5 Fast',
     'Codex 5.4',
-    'Codex 5.4 Mini',
-    'Codex 5.4 Mini Fast'
+    'Codex 5.4 Mini'
   ]);
   assert.deepEqual(models.map((model) => model.serviceTier ?? 'normal'), [
     'normal',
-    'fast',
     'normal',
-    'normal',
-    'fast'
+    'normal'
   ]);
 });
 
-test('buildProviderModels duplicates fallback model when discovery is unavailable', () => {
+test('buildProviderModels uses one fallback model when discovery is unavailable', () => {
   const models = buildProviderModels(baseConfig, []);
 
-  assert.deepEqual(models.map((model) => model.info.name), ['GPT-5.5', 'GPT-5.5 Fast']);
-  assert.equal(parseModelIdentifier(models[1].info.id).serviceTier, 'fast');
+  assert.deepEqual(models.map((model) => model.info.name), ['GPT-5.5']);
+  assert.equal(parseModelIdentifier('codex::gpt-5.5::tier=fast').serviceTier, 'fast');
 });
 
 test('buildProviderModels advertises image input when discovered model supports images', () => {

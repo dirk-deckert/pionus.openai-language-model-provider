@@ -1,6 +1,6 @@
 import type { ResponseUsage } from 'openai/resources/responses/responses';
 import * as vscode from 'vscode';
-import { convertMessagesToResponsesInput, estimateTokenCount, type ResponsesInputMessage } from './convertMessages.js';
+import { convertMessagesToResponsesInput, estimateTokenCount } from './convertMessages.js';
 import { getConfigurationSection, getProviderConfig, normalizeReasoningEffort, type ProviderConfig, type ReasoningEffort } from './config.js';
 import { buildFallbackModel, buildProviderModels, fetchAvailableModels, parseModelIdentifier, type ResolvedProviderModel } from './models.js';
 import { countInputTokens, streamResponseText } from './responsesClient.js';
@@ -54,8 +54,6 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
   readonly onDidChangeLanguageModelChatInformation: vscode.Event<void>;
   private readonly modelInfoChangedEmitter = new vscode.EventEmitter<void>();
   private cachedModels?: { key: string; expiresAt: number; models: ResolvedProviderModel[] };
-  private lastResponseId?: string;
-  private pendingToolCallIds = new Set<string>();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -116,11 +114,7 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
     const skillInstructions = await buildActiveSkillInstructions(this.context, config, this.outputChannel);
     const ideContext = config.includeIdeContext ? formatContextSnapshot(collectContextSnapshot(config)) : undefined;
     const instructions = await buildInstructions(config, agentProfile, { ideContext, skillInstructions });
-    const input = convertMessagesToResponsesInput(messages, Boolean(model.capabilities?.imageInput) && config.enableImageInput);
-    const toolContinuation = getToolContinuationInput(input, this.pendingToolCallIds, this.lastResponseId);
-    const requestInput = toolContinuation?.input ?? input;
-    const previousResponseId = toolContinuation?.previousResponseId ?? (config.enablePreviousResponseId ? this.lastResponseId : undefined);
-    const responseToolCallIds = new Set<string>();
+    const input = convertMessagesToResponsesInput(messages, false);
     const requestStartedAt = Date.now();
     const requestLogContext: RequestLogContext = {
       modelId: model.id,
@@ -144,10 +138,10 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
 
     this.outputChannel.info('provideLanguageModelChatResponse start', {
       ...toLogPayload(requestLogContext, streamLogState),
-      inputItemCount: requestInput.length,
-      originalInputItemCount: input.length,
-      previousResponseId: previousResponseId ?? null,
-      toolContinuation: Boolean(toolContinuation)
+      messageCount: messages.length,
+      inputItemCount: input.length,
+      toolMode: options.toolMode ?? null,
+      omitMaxOutputTokens: credentials.omitMaxOutputTokens
     });
 
     try {
@@ -159,12 +153,11 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
         model: agentProfile?.model ?? parsedModel.requestModel,
         instructions,
         serviceTier: getRequestServiceTier(parsedModel.serviceTier),
-        input: requestInput,
+        input,
         tools: options.tools,
         toolMode: options.toolMode,
         reasoning: reasoningEffort ? { effort: reasoningEffort } : agentProfile?.reasoningEffort ? { effort: agentProfile.reasoningEffort } : undefined,
         maxOutputTokens: config.maxOutputTokens,
-        previousResponseId,
         token,
         onTextDelta: (text) => {
           streamLogState.textDeltaCount += 1;
@@ -184,7 +177,6 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
         onToolCall: (callId, name, input) => {
           streamLogState.toolCallCount += 1;
           streamLogState.lastEventAt = Date.now();
-          responseToolCallIds.add(callId);
           this.outputChannel.info('response tool call received', {
             ...toLogPayload(requestLogContext, streamLogState),
             callId,
@@ -204,9 +196,6 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
             status: response.status,
             serviceTier: response.service_tier ?? null
           });
-          if (response.id) {
-            this.lastResponseId = response.id;
-          }
         },
         onResponseCompleted: (response) => {
           streamLogState.completed = true;
@@ -217,9 +206,6 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
             responseId: response.id,
             usage: response.usage ?? null
           });
-          if (response.id) {
-            this.lastResponseId = response.id;
-          }
           const usagePart = createUsageDataPart(response.usage);
           if (usagePart) {
             progress.report(usagePart);
@@ -227,7 +213,6 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
           if (response.usage) {
             this.usageSink?.record({ model: parsedModel.requestModel, usage: response.usage, completedAt: Date.now() });
           }
-          this.pendingToolCallIds = responseToolCallIds;
         },
         onResponseFailed: (message) => {
           streamLogState.lastEventAt = Date.now();
@@ -328,30 +313,8 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
   }
 }
 
-function getRequestServiceTier(serviceTier: 'fast' | undefined): 'priority' | undefined {
-  if (serviceTier === 'fast') {
-    return 'priority';
-  }
+function getRequestServiceTier(_serviceTier: 'fast' | undefined): undefined {
   return undefined;
-}
-
-function getToolContinuationInput(input: ResponsesInputMessage[], pendingToolCallIds: Set<string>, previousResponseId: string | undefined): { input: ResponsesInputMessage[]; previousResponseId: string } | undefined {
-  if (!previousResponseId || pendingToolCallIds.size === 0) {
-    return undefined;
-  }
-
-  const toolOutputs = input.filter((item) => isFunctionCallOutputForPendingCall(item, pendingToolCallIds));
-  return toolOutputs.length > 0 ? { input: toolOutputs, previousResponseId } : undefined;
-}
-
-function isFunctionCallOutputForPendingCall(item: ResponsesInputMessage, pendingToolCallIds: Set<string>): boolean {
-  if (!item || typeof item !== 'object') {
-    return false;
-  }
-  const candidate = item as { type?: unknown; call_id?: unknown };
-  return candidate.type === 'function_call_output'
-    && typeof candidate.call_id === 'string'
-    && pendingToolCallIds.has(candidate.call_id);
 }
 
 function getReasoningEffort(selectedReasoningEffort: ReasoningEffort | undefined, options: RuntimeProvideLanguageModelChatResponseOptions, defaultReasoningEffort: ReasoningEffort | undefined): ReasoningEffort | undefined {

@@ -13,7 +13,6 @@ export interface ProviderConfig {
   defaultReasoningEffort?: ReasoningEffort;
   maxOutputTokens: number;
   enableImageInput: boolean;
-  enablePreviousResponseId: boolean;
   includeIdeContext: boolean;
   ideContextMaxSelectionBytes: number;
   includeCodexInstructions: boolean;
@@ -47,7 +46,6 @@ export function getProviderConfig(): ProviderConfig {
     defaultReasoningEffort: normalizeReasoningEffort(getString(config, 'defaultReasoningEffort', 'auto')),
     maxOutputTokens: getPositiveNumber(config, 'maxOutputTokens', 8192),
     enableImageInput: config.get<boolean>('enableImageInput', true),
-    enablePreviousResponseId: config.get<boolean>('enablePreviousResponseId', false),
     includeIdeContext: config.get<boolean>('includeIdeContext', true),
     ideContextMaxSelectionBytes: getPositiveNumber(config, 'ideContextMaxSelectionBytes', 12000),
     includeCodexInstructions: config.get<boolean>('includeCodexInstructions', true),

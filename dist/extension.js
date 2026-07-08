@@ -3921,7 +3921,6 @@ function getProviderConfig() {
     defaultReasoningEffort: normalizeReasoningEffort(getString(config, "defaultReasoningEffort", "auto")),
     maxOutputTokens: getPositiveNumber(config, "maxOutputTokens", 8192),
     enableImageInput: config.get("enableImageInput", true),
-    enablePreviousResponseId: config.get("enablePreviousResponseId", false),
     includeIdeContext: config.get("includeIdeContext", true),
     ideContextMaxSelectionBytes: getPositiveNumber(config, "ideContextMaxSelectionBytes", 12e3),
     includeCodexInstructions: config.get("includeCodexInstructions", true),
@@ -4025,8 +4024,7 @@ function buildProviderModels(config, upstreamModels) {
   if (models.length > 0) {
     return models;
   }
-  const fallbackModel = buildFallbackModel(config);
-  return [fallbackModel, createFastVariant(fallbackModel)];
+  return [buildFallbackModel(config)];
 }
 function buildFallbackModel(config) {
   const reasoningEffort = MODEL_DEFAULT_REASONING[config.model];
@@ -4074,25 +4072,7 @@ function buildDiscoveredModel(model, config) {
     defaultReasoningEffort,
     serviceTier: void 0
   });
-  return supportsFastTier(model) ? [baseModel, createFastVariant(baseModel)] : [baseModel];
-}
-function createFastVariant(model) {
-  const fastId = `${PROVIDER_MODEL_ID_PREFIX}${model.requestModel}${FAST_ID_SUFFIX}`;
-  return {
-    ...model,
-    serviceTier: "fast",
-    info: {
-      ...model.info,
-      id: fastId,
-      name: `${model.info.name} Fast`,
-      version: `${model.info.version}-fast`,
-      tooltip: `${model.info.tooltip ?? ""} Fast service tier.`.trim(),
-      detail: appendDetail(model.info.detail, "Fast tier")
-    }
-  };
-}
-function appendDetail(detail, value) {
-  return detail?.trim() ? `${detail} | ${value}` : value;
+  return [baseModel];
 }
 function buildModel(options) {
   const configurationSchema = options.reasoningOptions.length > 1 ? buildThinkingEffortSchema(options.reasoningOptions, options.defaultReasoningEffort ?? options.reasoningOptions[0]?.effort) : void 0;
@@ -4183,10 +4163,6 @@ function getReasoningDescription(effort) {
     case "xhigh":
       return "Extra high reasoning depth for complex problems.";
   }
-}
-function supportsFastTier(model) {
-  const candidates = [model.service_tiers, model.supported_service_tiers, model.feature_requirements];
-  return candidates.some((candidate) => JSON.stringify(candidate ?? "").toLowerCase().includes("fast"));
 }
 function buildModelDetail(maxInputTokens, reasoningOptions, defaultEffort, serviceTier) {
   const parts = [`Context: ${maxInputTokens.toLocaleString()} tokens`];
@@ -14378,14 +14354,13 @@ var OPENAI_DEFAULT_MAX_RETRIES = 2;
 var OPENAI_DEFAULT_TIMEOUT_MS = 10 * 60 * 1e3;
 var LANGUAGE_MODEL_CHAT_TOOL_MODE_REQUIRED = 2;
 function buildResponsesCreateRequest(options) {
-  const tools = options.tools?.map(convertToolToResponseTool) ?? [];
+  const tools = options.tools?.flatMap(convertToolToResponseTool) ?? [];
   return {
     model: options.model,
     instructions: options.instructions,
     input: options.input,
     stream: true,
-    store: tools.length > 0 || Boolean(options.previousResponseId),
-    ...options.previousResponseId ? { previous_response_id: options.previousResponseId } : {},
+    store: false,
     ...options.serviceTier ? { service_tier: options.serviceTier } : {},
     ...options.reasoning ? { reasoning: options.reasoning } : {},
     ...tools.length > 0 ? { tools, tool_choice: mapToolChoice(options.toolMode) } : {},
@@ -14466,13 +14441,22 @@ async function countInputTokens(options) {
   return Math.floor(payload.input_tokens);
 }
 function convertToolToResponseTool(tool) {
-  return {
+  if (!isValidFunctionToolName(tool.name)) {
+    return [];
+  }
+  return [{
     type: "function",
     name: tool.name,
     description: tool.description,
-    parameters: tool.inputSchema ? tool.inputSchema : null,
+    parameters: isObjectRecord(tool.inputSchema) ? tool.inputSchema : null,
     strict: false
-  };
+  }];
+}
+function isValidFunctionToolName(name) {
+  return /^[A-Za-z0-9_-]+$/.test(name);
+}
+function isObjectRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function mapToolChoice(toolMode) {
   return toolMode === LANGUAGE_MODEL_CHAT_TOOL_MODE_REQUIRED ? "required" : "auto";
@@ -14952,8 +14936,6 @@ var CodexModelProvider = class {
   onDidChangeLanguageModelChatInformation;
   modelInfoChangedEmitter = new vscode5.EventEmitter();
   cachedModels;
-  lastResponseId;
-  pendingToolCallIds = /* @__PURE__ */ new Set();
   async provideLanguageModelChatInformation(options, token) {
     const config = getProviderConfig();
     const credentials = await getApiCredentials(this.context);
@@ -14983,11 +14965,7 @@ var CodexModelProvider = class {
     const skillInstructions = await buildActiveSkillInstructions(this.context, config, this.outputChannel);
     const ideContext = config.includeIdeContext ? formatContextSnapshot(collectContextSnapshot(config)) : void 0;
     const instructions = await buildInstructions(config, agentProfile, { ideContext, skillInstructions });
-    const input = convertMessagesToResponsesInput(messages, Boolean(model.capabilities?.imageInput) && config.enableImageInput);
-    const toolContinuation = getToolContinuationInput(input, this.pendingToolCallIds, this.lastResponseId);
-    const requestInput = toolContinuation?.input ?? input;
-    const previousResponseId = toolContinuation?.previousResponseId ?? (config.enablePreviousResponseId ? this.lastResponseId : void 0);
-    const responseToolCallIds = /* @__PURE__ */ new Set();
+    const input = convertMessagesToResponsesInput(messages, false);
     const requestStartedAt = Date.now();
     const requestLogContext = {
       modelId: model.id,
@@ -15010,10 +14988,10 @@ var CodexModelProvider = class {
     const unhandledEventTypes = /* @__PURE__ */ new Set();
     this.outputChannel.info("provideLanguageModelChatResponse start", {
       ...toLogPayload(requestLogContext, streamLogState),
-      inputItemCount: requestInput.length,
-      originalInputItemCount: input.length,
-      previousResponseId: previousResponseId ?? null,
-      toolContinuation: Boolean(toolContinuation)
+      messageCount: messages.length,
+      inputItemCount: input.length,
+      toolMode: options.toolMode ?? null,
+      omitMaxOutputTokens: credentials.omitMaxOutputTokens
     });
     try {
       await streamResponseText({
@@ -15024,12 +15002,11 @@ var CodexModelProvider = class {
         model: agentProfile?.model ?? parsedModel.requestModel,
         instructions,
         serviceTier: getRequestServiceTier(parsedModel.serviceTier),
-        input: requestInput,
+        input,
         tools: options.tools,
         toolMode: options.toolMode,
         reasoning: reasoningEffort ? { effort: reasoningEffort } : agentProfile?.reasoningEffort ? { effort: agentProfile.reasoningEffort } : void 0,
         maxOutputTokens: config.maxOutputTokens,
-        previousResponseId,
         token,
         onTextDelta: (text) => {
           streamLogState.textDeltaCount += 1;
@@ -15049,7 +15026,6 @@ var CodexModelProvider = class {
         onToolCall: (callId, name, input2) => {
           streamLogState.toolCallCount += 1;
           streamLogState.lastEventAt = Date.now();
-          responseToolCallIds.add(callId);
           this.outputChannel.info("response tool call received", {
             ...toLogPayload(requestLogContext, streamLogState),
             callId,
@@ -15069,9 +15045,6 @@ var CodexModelProvider = class {
             status: response.status,
             serviceTier: response.service_tier ?? null
           });
-          if (response.id) {
-            this.lastResponseId = response.id;
-          }
         },
         onResponseCompleted: (response) => {
           streamLogState.completed = true;
@@ -15082,9 +15055,6 @@ var CodexModelProvider = class {
             responseId: response.id,
             usage: response.usage ?? null
           });
-          if (response.id) {
-            this.lastResponseId = response.id;
-          }
           const usagePart = createUsageDataPart(response.usage);
           if (usagePart) {
             progress.report(usagePart);
@@ -15092,7 +15062,6 @@ var CodexModelProvider = class {
           if (response.usage) {
             this.usageSink?.record({ model: parsedModel.requestModel, usage: response.usage, completedAt: Date.now() });
           }
-          this.pendingToolCallIds = responseToolCallIds;
         },
         onResponseFailed: (message) => {
           streamLogState.lastEventAt = Date.now();
@@ -15181,25 +15150,8 @@ var CodexModelProvider = class {
     }
   }
 };
-function getRequestServiceTier(serviceTier) {
-  if (serviceTier === "fast") {
-    return "priority";
-  }
+function getRequestServiceTier(_serviceTier) {
   return void 0;
-}
-function getToolContinuationInput(input, pendingToolCallIds, previousResponseId) {
-  if (!previousResponseId || pendingToolCallIds.size === 0) {
-    return void 0;
-  }
-  const toolOutputs = input.filter((item) => isFunctionCallOutputForPendingCall(item, pendingToolCallIds));
-  return toolOutputs.length > 0 ? { input: toolOutputs, previousResponseId } : void 0;
-}
-function isFunctionCallOutputForPendingCall(item, pendingToolCallIds) {
-  if (!item || typeof item !== "object") {
-    return false;
-  }
-  const candidate = item;
-  return candidate.type === "function_call_output" && typeof candidate.call_id === "string" && pendingToolCallIds.has(candidate.call_id);
 }
 function getReasoningEffort(selectedReasoningEffort, options, defaultReasoningEffort) {
   return normalizeReasoningEffort(options.modelConfiguration?.reasoningEffort ?? options.configuration?.reasoningEffort) ?? normalizeReasoningEffort(options.modelOptions?.reasoningEffort) ?? normalizeReasoningEffort(options.modelOptions?.reasoning?.effort) ?? defaultReasoningEffort ?? selectedReasoningEffort;

@@ -22,7 +22,6 @@ export interface StreamResponseTextOptions {
   toolMode?: vscode.LanguageModelChatToolMode;
   reasoning?: Reasoning;
   maxOutputTokens: number;
-  previousResponseId?: string;
   token: vscode.CancellationToken;
   onTextDelta: (text: string) => void;
   onReasoningTextDelta?: (text: string) => void;
@@ -45,14 +44,13 @@ export interface CountInputTokensOptions {
 export type ResponsesCreateRequest = ReturnType<typeof buildResponsesCreateRequest>;
 
 export function buildResponsesCreateRequest(options: Omit<StreamResponseTextOptions, 'baseURL' | 'apiKey' | 'headers' | 'token' | 'onTextDelta' | 'onReasoningTextDelta' | 'onToolCall' | 'onResponseCreated' | 'onResponseCompleted' | 'onResponseFailed'>) {
-  const tools = options.tools?.map(convertToolToResponseTool) ?? [];
+  const tools = options.tools?.flatMap(convertToolToResponseTool) ?? [];
   return {
     model: options.model,
     instructions: options.instructions,
     input: options.input,
     stream: true,
-    store: tools.length > 0 || Boolean(options.previousResponseId),
-    ...(options.previousResponseId ? { previous_response_id: options.previousResponseId } : {}),
+    store: false,
     ...(options.serviceTier ? { service_tier: options.serviceTier } : {}),
     ...(options.reasoning ? { reasoning: options.reasoning } : {}),
     ...(tools.length > 0 ? { tools, tool_choice: mapToolChoice(options.toolMode) } : {}),
@@ -139,14 +137,25 @@ export async function countInputTokens(options: CountInputTokensOptions): Promis
   return Math.floor(payload.input_tokens);
 }
 
-function convertToolToResponseTool(tool: vscode.LanguageModelChatTool): FunctionTool {
-  return {
+function convertToolToResponseTool(tool: vscode.LanguageModelChatTool): FunctionTool[] {
+  if (!isValidFunctionToolName(tool.name)) {
+    return [];
+  }
+  return [{
     type: 'function',
     name: tool.name,
     description: tool.description,
-    parameters: tool.inputSchema ? tool.inputSchema as Record<string, unknown> : null,
+    parameters: isObjectRecord(tool.inputSchema) ? tool.inputSchema : null,
     strict: false
-  };
+  }];
+}
+
+function isValidFunctionToolName(name: string): boolean {
+  return /^[A-Za-z0-9_-]+$/.test(name);
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function mapToolChoice(toolMode: vscode.LanguageModelChatToolMode | undefined): ToolChoiceOptions {

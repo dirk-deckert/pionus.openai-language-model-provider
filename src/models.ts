@@ -89,8 +89,7 @@ export function buildProviderModels(config: ProviderConfig, upstreamModels: Upst
     return models;
   }
 
-  const fallbackModel = buildFallbackModel(config);
-  return [fallbackModel, createFastVariant(fallbackModel)];
+  return [buildFallbackModel(config)];
 }
 
 export function buildFallbackModel(config: ProviderConfig): ResolvedProviderModel {
@@ -144,27 +143,7 @@ function buildDiscoveredModel(model: UpstreamModel, config: ProviderConfig): Res
     serviceTier: undefined
   });
 
-  return supportsFastTier(model) ? [baseModel, createFastVariant(baseModel)] : [baseModel];
-}
-
-function createFastVariant(model: ResolvedProviderModel): ResolvedProviderModel {
-  const fastId = `${PROVIDER_MODEL_ID_PREFIX}${model.requestModel}${FAST_ID_SUFFIX}`;
-  return {
-    ...model,
-    serviceTier: 'fast',
-    info: {
-      ...model.info,
-      id: fastId,
-      name: `${model.info.name} Fast`,
-      version: `${model.info.version}-fast`,
-      tooltip: `${model.info.tooltip ?? ''} Fast service tier.`.trim(),
-      detail: appendDetail(model.info.detail, 'Fast tier')
-    } as vscode.LanguageModelChatInformation
-  };
-}
-
-function appendDetail(detail: string | undefined, value: string): string {
-  return detail?.trim() ? `${detail} | ${value}` : value;
+  return [baseModel];
 }
 
 function buildModel(options: {
@@ -269,11 +248,6 @@ function getReasoningDescription(effort: ReasoningEffort): string {
     case 'high': return 'Greater reasoning depth for complex problems.';
     case 'xhigh': return 'Extra high reasoning depth for complex problems.';
   }
-}
-
-function supportsFastTier(model: UpstreamModel): boolean {
-  const candidates = [model.service_tiers, model.supported_service_tiers, model.feature_requirements];
-  return candidates.some((candidate) => JSON.stringify(candidate ?? '').toLowerCase().includes('fast'));
 }
 
 function buildModelDetail(maxInputTokens: number, reasoningOptions: ReasoningOption[], defaultEffort: ReasoningEffort | undefined, serviceTier: 'fast' | undefined): string {

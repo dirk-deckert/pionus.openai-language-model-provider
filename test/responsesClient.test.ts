@@ -12,7 +12,6 @@ test('buildResponsesCreateRequest includes provider options and host tools', () 
     serviceTier: 'priority',
     reasoning: { effort: 'high' },
     maxOutputTokens: 4096,
-    previousResponseId: 'resp_123',
     toolMode: LANGUAGE_MODEL_CHAT_TOOL_MODE_REQUIRED,
     tools: [
       {
@@ -31,11 +30,10 @@ test('buildResponsesCreateRequest includes provider options and host tools', () 
   assert.equal(request.model, 'gpt-5.5');
   assert.equal(request.instructions, 'Be useful.');
   assert.equal(request.stream, true);
-  assert.equal(request.store, true);
+  assert.equal(request.store, false);
   assert.equal(request.service_tier, 'priority');
   assert.deepEqual(request.reasoning, { effort: 'high' });
   assert.equal(request.max_output_tokens, 4096);
-  assert.equal(request.previous_response_id, 'resp_123');
   assert.equal(request.tool_choice, 'required');
   assert.deepEqual(request.tools, [
     {
@@ -69,15 +67,33 @@ test('buildResponsesCreateRequest omits optional fields when disabled', () => {
   assert.equal('previous_response_id' in request, false);
 });
 
-test('buildResponsesCreateRequest stores continuation requests', () => {
+test('buildResponsesCreateRequest skips illegal tool names and normalizes non-object schemas', () => {
   const request = buildResponsesCreateRequest({
     model: 'gpt-5.5',
-    instructions: 'Finish.',
-    input: [{ type: 'function_call_output', call_id: 'call_123', output: 'contents' } as never],
+    instructions: 'Be useful.',
+    input: [],
     maxOutputTokens: 4096,
-    previousResponseId: 'resp_123'
+    tools: [
+      {
+        name: 'bad.name',
+        description: 'Invalid function name.',
+        inputSchema: { type: 'object' }
+      },
+      {
+        name: 'valid_name',
+        description: 'Valid function name with bad schema.',
+        inputSchema: true
+      }
+    ] as never
   });
 
-  assert.equal(request.store, true);
-  assert.equal(request.previous_response_id, 'resp_123');
+  assert.deepEqual(request.tools, [
+    {
+      type: 'function',
+      name: 'valid_name',
+      description: 'Valid function name with bad schema.',
+      parameters: null,
+      strict: false
+    }
+  ]);
 });
