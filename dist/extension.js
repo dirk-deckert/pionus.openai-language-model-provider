@@ -4024,11 +4024,11 @@ function buildProviderModels(config, upstreamModels) {
   if (models.length > 0) {
     return models;
   }
-  return [buildFallbackModel(config)];
+  return buildFallbackModels(config);
 }
-function buildFallbackModel(config) {
+function buildFallbackModels(config) {
   const reasoningEffort = MODEL_DEFAULT_REASONING[config.model];
-  return buildModel({
+  return buildModelVariants({
     config,
     requestModel: config.model,
     name: formatDisplayName(config.model),
@@ -4037,8 +4037,7 @@ function buildFallbackModel(config) {
     version: "1.0.0",
     imageInput: false,
     reasoningOptions: reasoningEffort ? [toReasoningOption(reasoningEffort)] : [],
-    defaultReasoningEffort: reasoningEffort,
-    serviceTier: void 0
+    defaultReasoningEffort: reasoningEffort
   });
 }
 function parseModelIdentifier(modelId) {
@@ -4060,7 +4059,7 @@ function buildDiscoveredModel(model, config) {
   const requestModel = getString2(model.slug) ?? config.model;
   const defaultReasoningEffort = normalizeReasoningEffort2(model.default_reasoning_level) ?? MODEL_DEFAULT_REASONING[requestModel];
   const reasoningOptions = getReasoningOptions(model, requestModel, defaultReasoningEffort);
-  const baseModel = buildModel({
+  return buildModelVariants({
     config,
     requestModel,
     name: getString2(model.display_name) ?? formatDisplayName(requestModel),
@@ -4069,10 +4068,14 @@ function buildDiscoveredModel(model, config) {
     version: getString2(model.comp_hash) ?? "1.0.0",
     imageInput: Array.isArray(model.input_modalities) && model.input_modalities.includes("image"),
     reasoningOptions,
-    defaultReasoningEffort,
-    serviceTier: void 0
+    defaultReasoningEffort
   });
-  return [baseModel];
+}
+function buildModelVariants(options) {
+  return [
+    buildModel({ ...options, serviceTier: void 0 }),
+    buildModel({ ...options, name: `${options.name} Fast`, serviceTier: "fast" })
+  ];
 }
 function buildModel(options) {
   const configurationSchema = options.reasoningOptions.length > 1 ? buildThinkingEffortSchema(options.reasoningOptions, options.defaultReasoningEffort ?? options.reasoningOptions[0]?.effort) : void 0;
@@ -15136,7 +15139,7 @@ var CodexModelProvider = class {
       models = buildProviderModels(config, await fetchAvailableModels(config, credentials, token));
     } catch (error) {
       this.outputChannel.warn("getAvailableModels discovery failed, using fallback model", { error: error instanceof Error ? error.message : String(error) });
-      models = [buildFallbackModel(config)];
+      models = buildFallbackModels(config);
     }
     this.cachedModels = { key: cacheKey, expiresAt: Date.now() + 6e4, models };
     return models;
@@ -15150,8 +15153,8 @@ var CodexModelProvider = class {
     }
   }
 };
-function getRequestServiceTier(_serviceTier) {
-  return void 0;
+function getRequestServiceTier(serviceTier) {
+  return serviceTier === "fast" ? "priority" : void 0;
 }
 function getReasoningEffort(selectedReasoningEffort, options, defaultReasoningEffort) {
   return normalizeReasoningEffort(options.modelConfiguration?.reasoningEffort ?? options.configuration?.reasoningEffort) ?? normalizeReasoningEffort(options.modelOptions?.reasoningEffort) ?? normalizeReasoningEffort(options.modelOptions?.reasoning?.effort) ?? defaultReasoningEffort ?? selectedReasoningEffort;

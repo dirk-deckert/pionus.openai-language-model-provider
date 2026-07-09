@@ -7,7 +7,7 @@ The provider focuses on functional Codex behavior that fits inside VS Code's `La
 Provider capabilities include:
 
 - Codex model discovery through the configured Responses backend.
-- Capability-driven model advertisement for context window, image input, reasoning levels, and fast service tier.
+- Capability-driven model metadata for context window, image input, and reasoning levels, with every advertised model duplicated as a Fast service-tier entry.
 - Reasoning-effort model configuration when discovered model metadata exposes more than one supported reasoning level.
 - Streaming text, reasoning text, tool calls, usage reporting, and response diagnostics.
 - Host-provided VS Code tools mapped to Responses function tools.

@@ -89,12 +89,12 @@ export function buildProviderModels(config: ProviderConfig, upstreamModels: Upst
     return models;
   }
 
-  return [buildFallbackModel(config)];
+  return buildFallbackModels(config);
 }
 
-export function buildFallbackModel(config: ProviderConfig): ResolvedProviderModel {
+export function buildFallbackModels(config: ProviderConfig): ResolvedProviderModel[] {
   const reasoningEffort = MODEL_DEFAULT_REASONING[config.model];
-  return buildModel({
+  return buildModelVariants({
     config,
     requestModel: config.model,
     name: formatDisplayName(config.model),
@@ -103,8 +103,7 @@ export function buildFallbackModel(config: ProviderConfig): ResolvedProviderMode
     version: '1.0.0',
     imageInput: false,
     reasoningOptions: reasoningEffort ? [toReasoningOption(reasoningEffort)] : [],
-    defaultReasoningEffort: reasoningEffort,
-    serviceTier: undefined
+    defaultReasoningEffort: reasoningEffort
   });
 }
 
@@ -130,7 +129,7 @@ function buildDiscoveredModel(model: UpstreamModel, config: ProviderConfig): Res
   const requestModel = getString(model.slug) ?? config.model;
   const defaultReasoningEffort = normalizeReasoningEffort(model.default_reasoning_level) ?? MODEL_DEFAULT_REASONING[requestModel];
   const reasoningOptions = getReasoningOptions(model, requestModel, defaultReasoningEffort);
-  const baseModel = buildModel({
+  return buildModelVariants({
     config,
     requestModel,
     name: getString(model.display_name) ?? formatDisplayName(requestModel),
@@ -139,11 +138,25 @@ function buildDiscoveredModel(model: UpstreamModel, config: ProviderConfig): Res
     version: getString(model.comp_hash) ?? '1.0.0',
     imageInput: Array.isArray(model.input_modalities) && model.input_modalities.includes('image'),
     reasoningOptions,
-    defaultReasoningEffort,
-    serviceTier: undefined
+    defaultReasoningEffort
   });
+}
 
-  return [baseModel];
+function buildModelVariants(options: {
+  config: ProviderConfig;
+  requestModel: string;
+  name: string;
+  tooltip: string;
+  maxInputTokens: number;
+  version: string;
+  imageInput: boolean;
+  reasoningOptions: ReasoningOption[];
+  defaultReasoningEffort?: ReasoningEffort;
+}): ResolvedProviderModel[] {
+  return [
+    buildModel({ ...options, serviceTier: undefined }),
+    buildModel({ ...options, name: `${options.name} Fast`, serviceTier: 'fast' })
+  ];
 }
 
 function buildModel(options: {

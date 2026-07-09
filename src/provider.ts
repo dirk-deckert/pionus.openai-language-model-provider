@@ -2,7 +2,7 @@ import type { ResponseUsage } from 'openai/resources/responses/responses';
 import * as vscode from 'vscode';
 import { convertMessagesToResponsesInput, estimateTokenCount } from './convertMessages.js';
 import { getConfigurationSection, getProviderConfig, normalizeReasoningEffort, type ProviderConfig, type ReasoningEffort } from './config.js';
-import { buildFallbackModel, buildProviderModels, fetchAvailableModels, parseModelIdentifier, type ResolvedProviderModel } from './models.js';
+import { buildFallbackModels, buildProviderModels, fetchAvailableModels, parseModelIdentifier, type ResolvedProviderModel } from './models.js';
 import { countInputTokens, streamResponseText } from './responsesClient.js';
 import { normalizeBaseURL } from './urlUtils.js';
 import { getApiCredentials } from './secrets.js';
@@ -297,7 +297,7 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
       models = buildProviderModels(config, await fetchAvailableModels(config, credentials, token));
     } catch (error) {
       this.outputChannel.warn('getAvailableModels discovery failed, using fallback model', { error: error instanceof Error ? error.message : String(error) });
-      models = [buildFallbackModel(config)];
+      models = buildFallbackModels(config);
     }
     this.cachedModels = { key: cacheKey, expiresAt: Date.now() + 60_000, models };
     return models;
@@ -313,8 +313,8 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
   }
 }
 
-function getRequestServiceTier(_serviceTier: 'fast' | undefined): undefined {
-  return undefined;
+function getRequestServiceTier(serviceTier: 'fast' | undefined): 'priority' | undefined {
+  return serviceTier === 'fast' ? 'priority' : undefined;
 }
 
 function getReasoningEffort(selectedReasoningEffort: ReasoningEffort | undefined, options: RuntimeProvideLanguageModelChatResponseOptions, defaultReasoningEffort: ReasoningEffort | undefined): ReasoningEffort | undefined {
