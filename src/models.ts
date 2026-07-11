@@ -7,9 +7,13 @@ const PROVIDER_MODEL_ID_PREFIX = 'codex::';
 const REASONING_ID_DELIMITER = '::reasoning=';
 const FAST_ID_SUFFIX = '::tier=fast';
 const DEFAULT_CONTEXT_WINDOW = 272000;
+const LARGE_CONTEXT_WINDOW = 372000;
 
 const MODEL_DEFAULT_REASONING: Partial<Record<string, ReasoningEffort>> = {
-  'gpt-5.5': 'xhigh',
+  'gpt-5.6-sol': 'low',
+  'gpt-5.6-terra': 'medium',
+  'gpt-5.6-luna': 'medium',
+  'gpt-5.5': 'medium',
   'gpt-5.4': 'medium',
   'gpt-5.4-mini': 'medium',
   'gpt-5.3-codex-spark-preview': 'high',
@@ -22,8 +26,19 @@ const REASONING_LABELS: Record<ReasoningEffort, string> = {
   low: 'Low',
   medium: 'Medium',
   high: 'High',
-  xhigh: 'Extra High'
+  xhigh: 'Extra High',
+  max: 'Max',
+  ultra: 'Ultra'
 };
+
+const FALLBACK_MODELS = [
+  { requestModel: 'gpt-5.6-sol', maxInputTokens: LARGE_CONTEXT_WINDOW, imageInput: true },
+  { requestModel: 'gpt-5.6-terra', maxInputTokens: LARGE_CONTEXT_WINDOW, imageInput: true },
+  { requestModel: 'gpt-5.6-luna', maxInputTokens: LARGE_CONTEXT_WINDOW, imageInput: true },
+  { requestModel: 'gpt-5.5', maxInputTokens: DEFAULT_CONTEXT_WINDOW, imageInput: true },
+  { requestModel: 'gpt-5.4', maxInputTokens: DEFAULT_CONTEXT_WINDOW, imageInput: true },
+  { requestModel: 'gpt-5.4-mini', maxInputTokens: DEFAULT_CONTEXT_WINDOW, imageInput: true }
+] as const;
 
 interface UpstreamModel {
   slug?: unknown;
@@ -93,18 +108,19 @@ export function buildProviderModels(config: ProviderConfig, upstreamModels: Upst
 }
 
 export function buildFallbackModels(config: ProviderConfig): ResolvedProviderModel[] {
-  const reasoningEffort = MODEL_DEFAULT_REASONING[config.model];
-  return buildModelVariants({
-    config,
-    requestModel: config.model,
-    name: formatDisplayName(config.model),
-    tooltip: 'Codex fallback model used when discovery is unavailable.',
-    maxInputTokens: DEFAULT_CONTEXT_WINDOW,
-    version: '1.0.0',
-    imageInput: false,
-    reasoningOptions: reasoningEffort ? [toReasoningOption(reasoningEffort)] : [],
-    defaultReasoningEffort: reasoningEffort
-  });
+  const pinnedModels = FALLBACK_MODELS.flatMap((model) => buildFallbackModelVariants(config, model));
+  if (FALLBACK_MODELS.some((model) => model.requestModel === config.model)) {
+    return pinnedModels;
+  }
+
+  return [
+    ...buildFallbackModelVariants(config, {
+      requestModel: config.model,
+      maxInputTokens: DEFAULT_CONTEXT_WINDOW,
+      imageInput: false
+    }),
+    ...pinnedModels
+  ];
 }
 
 export function parseModelIdentifier(modelId: string): ParsedModelIdentifier {
@@ -157,6 +173,21 @@ function buildModelVariants(options: {
     buildModel({ ...options, serviceTier: undefined }),
     buildModel({ ...options, name: `${options.name} Fast`, serviceTier: 'fast' })
   ];
+}
+
+function buildFallbackModelVariants(config: ProviderConfig, model: { requestModel: string; maxInputTokens: number; imageInput: boolean }): ResolvedProviderModel[] {
+  const reasoningEffort = MODEL_DEFAULT_REASONING[model.requestModel];
+  return buildModelVariants({
+    config,
+    requestModel: model.requestModel,
+    name: formatDisplayName(model.requestModel),
+    tooltip: 'Codex fallback model used when discovery is unavailable.',
+    maxInputTokens: model.maxInputTokens,
+    version: '1.0.0',
+    imageInput: model.imageInput,
+    reasoningOptions: reasoningEffort ? [toReasoningOption(reasoningEffort)] : [],
+    defaultReasoningEffort: reasoningEffort
+  });
 }
 
 function buildModel(options: {
@@ -260,6 +291,8 @@ function getReasoningDescription(effort: ReasoningEffort): string {
     case 'medium': return 'Balanced reasoning for everyday tasks.';
     case 'high': return 'Greater reasoning depth for complex problems.';
     case 'xhigh': return 'Extra high reasoning depth for complex problems.';
+    case 'max': return 'Maximum reasoning depth for the hardest problems.';
+    case 'ultra': return 'Maximum reasoning with automatic task delegation.';
   }
 }
 
@@ -276,7 +309,15 @@ function buildModelDetail(maxInputTokens: number, reasoningOptions: ReasoningOpt
 }
 
 function formatDisplayName(model: string): string {
-  return model.trim().replace(/^gpt/i, 'GPT').replace(/codex/gi, 'Codex');
+  return model.trim().split('-').map((part) => {
+    if (/^gpt$/i.test(part)) {
+      return 'GPT';
+    }
+    if (/^codex$/i.test(part)) {
+      return 'Codex';
+    }
+    return part ? `${part[0].toUpperCase()}${part.slice(1)}` : part;
+  }).join('-');
 }
 
 function isModelVisible(model: UpstreamModel): boolean {
@@ -295,6 +336,8 @@ function normalizeReasoningEffort(value: unknown): ReasoningEffort | undefined {
     case 'medium':
     case 'high':
     case 'xhigh':
+    case 'max':
+    case 'ultra':
       return value;
     default:
       return undefined;

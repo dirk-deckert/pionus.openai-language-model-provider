@@ -4,7 +4,7 @@ export const baseConfig = {
   baseURL: 'https://chatgpt.com/backend-api/codex/responses',
   clientVersion: '0.0.0',
   credentialsSource: 'auto',
-  model: 'gpt-5.5',
+  model: 'gpt-5.6-sol',
   instructions: 'You are a helpful coding assistant integrated with VS Code.',
   defaultReasoningEffort: undefined,
   maxOutputTokens: 8192,

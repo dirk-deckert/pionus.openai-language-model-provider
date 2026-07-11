@@ -142,6 +142,8 @@ function normalizeReasoningEffort(value: unknown): ReasoningEffort | undefined {
     case 'medium':
     case 'high':
     case 'xhigh':
+    case 'max':
+    case 'ultra':
       return value;
     default:
       return undefined;

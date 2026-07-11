@@ -122,7 +122,7 @@
         },
         "pionus.codex.model": {
           "type": "string",
-          "default": "gpt-5.5",
+          "default": "gpt-5.6-sol",
           "description": "Fallback model ID when discovery is unavailable."
         },
         "pionus.codex.instructions": {
@@ -134,7 +134,7 @@
         "pionus.codex.defaultReasoningEffort": {
           "type": "string",
           "default": "auto",
-          "enum": ["auto", "none", "minimal", "low", "medium", "high", "xhigh"],
+          "enum": ["auto", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
           "description": "Fallback reasoning effort when VS Code does not provide one."
         },
         "pionus.codex.maxOutputTokens": {

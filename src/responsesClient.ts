@@ -1,13 +1,17 @@
 import OpenAI, { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, InternalServerError, RateLimitError } from 'openai';
-import type { FunctionTool, ResponseUsage, ToolChoiceOptions } from 'openai/resources/responses/responses';
-import type { Reasoning } from 'openai/resources/shared';
+import type { FunctionTool, ResponseStreamEvent, ResponseUsage, ToolChoiceOptions } from 'openai/resources/responses/responses';
 import type * as vscode from 'vscode';
+import type { ReasoningEffort } from './config.js';
 import type { ResponsesInputMessage } from './convertMessages.js';
 import { normalizeBaseURL } from './urlUtils.js';
 
 const OPENAI_DEFAULT_MAX_RETRIES = 2;
 const OPENAI_DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const LANGUAGE_MODEL_CHAT_TOOL_MODE_REQUIRED = 2;
+
+export interface CodexReasoning {
+  effort: ReasoningEffort;
+}
 
 export interface StreamResponseTextOptions {
   baseURL: string;
@@ -20,7 +24,7 @@ export interface StreamResponseTextOptions {
   input: ResponsesInputMessage[];
   tools?: readonly vscode.LanguageModelChatTool[];
   toolMode?: vscode.LanguageModelChatToolMode;
-  reasoning?: Reasoning;
+  reasoning?: CodexReasoning;
   maxOutputTokens: number;
   token: vscode.CancellationToken;
   onTextDelta: (text: string) => void;
@@ -76,11 +80,11 @@ export async function streamResponseText(options: StreamResponseTextOptions): Pr
 
     const request = buildResponsesCreateRequest(options);
 
-    const stream = await client.responses.create(request, {
+    const stream = await client.responses.create(request as unknown as Parameters<typeof client.responses.create>[0], {
       signal: abortController.signal,
       maxRetries: OPENAI_DEFAULT_MAX_RETRIES,
       timeout: OPENAI_DEFAULT_TIMEOUT_MS
-    });
+    }) as AsyncIterable<ResponseStreamEvent>;
 
     for await (const event of stream) {
       if (options.token.isCancellationRequested) {

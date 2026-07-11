@@ -3916,7 +3916,7 @@ function getProviderConfig() {
     baseURL: getString(config, "baseURL", "https://chatgpt.com/backend-api/codex/responses"),
     clientVersion: getString(config, "clientVersion", "0.0.0"),
     credentialsSource: getEnum(config, "credentialsSource", ["auto", "codexAuth", "secretStorage"], "auto"),
-    model: getString(config, "model", "gpt-5.5"),
+    model: getString(config, "model", "gpt-5.6-sol"),
     instructions: getString(config, "instructions", "You are a helpful coding assistant integrated with VS Code."),
     defaultReasoningEffort: normalizeReasoningEffort(getString(config, "defaultReasoningEffort", "auto")),
     maxOutputTokens: getPositiveNumber(config, "maxOutputTokens", 8192),
@@ -3952,6 +3952,8 @@ function normalizeReasoningEffort(value) {
     case "medium":
     case "high":
     case "xhigh":
+    case "max":
+    case "ultra":
       return value;
     default:
       return void 0;
@@ -3987,8 +3989,12 @@ var PROVIDER_MODEL_ID_PREFIX = "codex::";
 var REASONING_ID_DELIMITER = "::reasoning=";
 var FAST_ID_SUFFIX = "::tier=fast";
 var DEFAULT_CONTEXT_WINDOW = 272e3;
+var LARGE_CONTEXT_WINDOW = 372e3;
 var MODEL_DEFAULT_REASONING = {
-  "gpt-5.5": "xhigh",
+  "gpt-5.6-sol": "low",
+  "gpt-5.6-terra": "medium",
+  "gpt-5.6-luna": "medium",
+  "gpt-5.5": "medium",
   "gpt-5.4": "medium",
   "gpt-5.4-mini": "medium",
   "gpt-5.3-codex-spark-preview": "high",
@@ -4000,8 +4006,18 @@ var REASONING_LABELS = {
   low: "Low",
   medium: "Medium",
   high: "High",
-  xhigh: "Extra High"
+  xhigh: "Extra High",
+  max: "Max",
+  ultra: "Ultra"
 };
+var FALLBACK_MODELS = [
+  { requestModel: "gpt-5.6-sol", maxInputTokens: LARGE_CONTEXT_WINDOW, imageInput: true },
+  { requestModel: "gpt-5.6-terra", maxInputTokens: LARGE_CONTEXT_WINDOW, imageInput: true },
+  { requestModel: "gpt-5.6-luna", maxInputTokens: LARGE_CONTEXT_WINDOW, imageInput: true },
+  { requestModel: "gpt-5.5", maxInputTokens: DEFAULT_CONTEXT_WINDOW, imageInput: true },
+  { requestModel: "gpt-5.4", maxInputTokens: DEFAULT_CONTEXT_WINDOW, imageInput: true },
+  { requestModel: "gpt-5.4-mini", maxInputTokens: DEFAULT_CONTEXT_WINDOW, imageInput: true }
+];
 async function fetchAvailableModels(config, credentials, token) {
   const modelsURL = new URL(`${normalizeBaseURL(config.baseURL)}/models`);
   modelsURL.searchParams.set("client_version", config.clientVersion);
@@ -4027,18 +4043,18 @@ function buildProviderModels(config, upstreamModels) {
   return buildFallbackModels(config);
 }
 function buildFallbackModels(config) {
-  const reasoningEffort = MODEL_DEFAULT_REASONING[config.model];
-  return buildModelVariants({
-    config,
-    requestModel: config.model,
-    name: formatDisplayName(config.model),
-    tooltip: "Codex fallback model used when discovery is unavailable.",
-    maxInputTokens: DEFAULT_CONTEXT_WINDOW,
-    version: "1.0.0",
-    imageInput: false,
-    reasoningOptions: reasoningEffort ? [toReasoningOption(reasoningEffort)] : [],
-    defaultReasoningEffort: reasoningEffort
-  });
+  const pinnedModels = FALLBACK_MODELS.flatMap((model) => buildFallbackModelVariants(config, model));
+  if (FALLBACK_MODELS.some((model) => model.requestModel === config.model)) {
+    return pinnedModels;
+  }
+  return [
+    ...buildFallbackModelVariants(config, {
+      requestModel: config.model,
+      maxInputTokens: DEFAULT_CONTEXT_WINDOW,
+      imageInput: false
+    }),
+    ...pinnedModels
+  ];
 }
 function parseModelIdentifier(modelId) {
   let normalized = modelId.startsWith(PROVIDER_MODEL_ID_PREFIX) ? modelId.slice(PROVIDER_MODEL_ID_PREFIX.length) : modelId;
@@ -4076,6 +4092,20 @@ function buildModelVariants(options) {
     buildModel({ ...options, serviceTier: void 0 }),
     buildModel({ ...options, name: `${options.name} Fast`, serviceTier: "fast" })
   ];
+}
+function buildFallbackModelVariants(config, model) {
+  const reasoningEffort = MODEL_DEFAULT_REASONING[model.requestModel];
+  return buildModelVariants({
+    config,
+    requestModel: model.requestModel,
+    name: formatDisplayName(model.requestModel),
+    tooltip: "Codex fallback model used when discovery is unavailable.",
+    maxInputTokens: model.maxInputTokens,
+    version: "1.0.0",
+    imageInput: model.imageInput,
+    reasoningOptions: reasoningEffort ? [toReasoningOption(reasoningEffort)] : [],
+    defaultReasoningEffort: reasoningEffort
+  });
 }
 function buildModel(options) {
   const configurationSchema = options.reasoningOptions.length > 1 ? buildThinkingEffortSchema(options.reasoningOptions, options.defaultReasoningEffort ?? options.reasoningOptions[0]?.effort) : void 0;
@@ -4165,6 +4195,10 @@ function getReasoningDescription(effort) {
       return "Greater reasoning depth for complex problems.";
     case "xhigh":
       return "Extra high reasoning depth for complex problems.";
+    case "max":
+      return "Maximum reasoning depth for the hardest problems.";
+    case "ultra":
+      return "Maximum reasoning with automatic task delegation.";
   }
 }
 function buildModelDetail(maxInputTokens, reasoningOptions, defaultEffort, serviceTier) {
@@ -4179,7 +4213,15 @@ function buildModelDetail(maxInputTokens, reasoningOptions, defaultEffort, servi
   return parts.join(" | ");
 }
 function formatDisplayName(model) {
-  return model.trim().replace(/^gpt/i, "GPT").replace(/codex/gi, "Codex");
+  return model.trim().split("-").map((part) => {
+    if (/^gpt$/i.test(part)) {
+      return "GPT";
+    }
+    if (/^codex$/i.test(part)) {
+      return "Codex";
+    }
+    return part ? `${part[0].toUpperCase()}${part.slice(1)}` : part;
+  }).join("-");
 }
 function isModelVisible(model) {
   if (model.supported_in_api === false) {
@@ -4196,6 +4238,8 @@ function normalizeReasoningEffort2(value) {
     case "medium":
     case "high":
     case "xhigh":
+    case "max":
+    case "ultra":
       return value;
     default:
       return void 0;
@@ -14779,6 +14823,8 @@ function normalizeReasoningEffort3(value) {
     case "medium":
     case "high":
     case "xhigh":
+    case "max":
+    case "ultra":
       return value;
     default:
       return void 0;

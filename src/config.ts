@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
 export type CredentialsSource = 'auto' | 'codexAuth' | 'secretStorage';
-export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
 export type ReasoningEffortSetting = 'auto' | ReasoningEffort;
 
 export interface ProviderConfig {
@@ -41,7 +41,7 @@ export function getProviderConfig(): ProviderConfig {
     baseURL: getString(config, 'baseURL', 'https://chatgpt.com/backend-api/codex/responses'),
     clientVersion: getString(config, 'clientVersion', '0.0.0'),
     credentialsSource: getEnum(config, 'credentialsSource', ['auto', 'codexAuth', 'secretStorage'], 'auto'),
-    model: getString(config, 'model', 'gpt-5.5'),
+    model: getString(config, 'model', 'gpt-5.6-sol'),
     instructions: getString(config, 'instructions', 'You are a helpful coding assistant integrated with VS Code.'),
     defaultReasoningEffort: normalizeReasoningEffort(getString(config, 'defaultReasoningEffort', 'auto')),
     maxOutputTokens: getPositiveNumber(config, 'maxOutputTokens', 8192),
@@ -79,6 +79,8 @@ export function normalizeReasoningEffort(value: unknown): ReasoningEffort | unde
     case 'medium':
     case 'high':
     case 'xhigh':
+    case 'max':
+    case 'ultra':
       return value;
     default:
       return undefined;
