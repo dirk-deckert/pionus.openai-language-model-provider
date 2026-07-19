@@ -16,6 +16,18 @@ Provider capabilities include:
 - AGENTS.md/project instructions, provider agent profiles, optional skill injection, and lightweight IDE context injection.
 - Token counting through the Responses input-token endpoint with local fallback estimation.
 
+## Privacy and credentials
+
+Requests may include chat messages, explicitly attached images, host-provided tool
+schemas and results, active-editor context, project instructions, selected skills,
+and agent-profile instructions. They are sent only to the configured endpoint.
+
+ChatGPT access tokens from `~/.codex/auth.json` are restricted to the official
+ChatGPT Codex HTTPS endpoint. `OPENAI_API_KEY` credentials from that file are
+restricted to the official OpenAI API HTTPS endpoint. Custom endpoints require a
+separate, explicitly confirmed API key stored under an endpoint-specific key in
+VS Code SecretStorage; official credentials are never forwarded to them.
+
 The second integration slice adds lightweight active-editor context injection, selectable `SKILL.md` instruction injection, and explicit Codex CLI bridge commands for read-only `codex exec` plus non-mutating `codex review`. CLI bridge commands are disabled by default and ask before enabling.
 
 Inline completions are intentionally split out of this extension. A future `pionus.codex-inline-completions` extension may share provider-independent code such as credentials, model discovery, Responses transport, URL handling, and diagnostics, but it should own editor typing hooks, completion prompts, latency behavior, and completion-specific settings.

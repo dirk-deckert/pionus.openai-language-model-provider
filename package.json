@@ -2,7 +2,7 @@
   "name": "openai-language-model-provider",
   "displayName": "Pionus OpenAI Language Model Provider",
   "description": "Expose Codex as a VS Code/Copilot Chat language model provider with Codex-like settings and diagnostics.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "pionus",
   "license": "MIT",
   "homepage": "https://github.com/dirk-deckert/pionus.openai-language-model-provider#readme",
@@ -121,6 +121,7 @@
       "properties": {
         "pionus.codex.baseURL": {
           "type": "string",
+          "scope": "application",
           "default": "https://chatgpt.com/backend-api/codex/responses",
           "description": "ChatGPT Codex backend URL used for Responses requests and model discovery."
         },
@@ -132,6 +133,7 @@
         },
         "pionus.codex.credentialsSource": {
           "type": "string",
+          "scope": "application",
           "default": "auto",
           "enum": ["auto", "codexAuth", "secretStorage"],
           "description": "Credential source for Codex requests."
@@ -234,11 +236,13 @@
         },
         "pionus.codex.enableCliBridge": {
           "type": "boolean",
+          "scope": "application",
           "default": false,
           "description": "Enable explicit Codex CLI bridge commands. Mutation-capable commands still ask for confirmation."
         },
         "pionus.codex.cliExecutable": {
           "type": ["string", "null"],
+          "scope": "machine",
           "default": null,
           "description": "Optional Codex CLI executable path. Leave empty to resolve from PATH."
         },

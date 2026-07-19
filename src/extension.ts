@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { CodexModelProvider } from './provider.js';
-import { clearApiKey, setApiKey } from './secrets.js';
+import { classifyCredentialTarget, clearApiKey, setApiKey } from './secrets.js';
 import { getConfigurationSection, getProviderConfig } from './config.js';
 import { UsageStatusBar } from './usageStatus.js';
 import { loadAgentProfiles } from './agentProfiles.js';
@@ -21,15 +21,28 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('pionus.codex.openDebugLogs', () => outputChannel.show(true)),
     vscode.commands.registerCommand('pionus.codex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', getConfigurationSection())),
     vscode.commands.registerCommand('pionus.codex.setApiKey', async () => {
-      const apiKey = await vscode.window.showInputBox({ title: 'Set Codex API Key', prompt: 'Enter your API key', password: true, ignoreFocusOut: true });
+      const config = getProviderConfig();
+      const target = classifyCredentialTarget(config.baseURL);
+      if (target.kind === 'custom') {
+        const confirmation = await vscode.window.showWarningMessage(
+          `Store a separate API key for custom endpoint ${target.baseURL}? Codex and OpenAI credentials will never be sent to this endpoint.`,
+          { modal: true },
+          'Store API Key'
+        );
+        if (confirmation !== 'Store API Key') {
+          return;
+        }
+      }
+      const apiKey = await vscode.window.showInputBox({ title: `Set ${target.label} API Key`, prompt: `Enter the API key for ${target.baseURL}`, password: true, ignoreFocusOut: true });
       if (apiKey?.trim()) {
-        await setApiKey(context, apiKey.trim());
-        await vscode.window.showInformationMessage('Pionus Codex API key saved.');
+        await setApiKey(context, config.baseURL, apiKey.trim());
+        await vscode.window.showInformationMessage(`${target.label} API key saved.`);
       }
     }),
     vscode.commands.registerCommand('pionus.codex.clearApiKey', async () => {
-      await clearApiKey(context);
-      await vscode.window.showInformationMessage('Pionus Codex API key cleared.');
+      const config = getProviderConfig();
+      const target = await clearApiKey(context, config.baseURL);
+      await vscode.window.showInformationMessage(`${target.label} API key cleared.`);
     }),
     vscode.commands.registerCommand('pionus.codex.selectAgentProfile', async () => selectAgentProfile(outputChannel)),
     vscode.commands.registerCommand('pionus.codex.resetAgentProfile', () => setActiveAgentProfile(null)),
@@ -155,7 +168,7 @@ async function runCliExec(): Promise<void> {
     imagePaths: imageUris?.map((uri) => uri.fsPath),
     enableSearch
   });
-  launchTerminal('Pionus Codex Exec', command.executable, toShellCommand(command), getPrimaryWorkspaceFolder());
+  launchTerminal('Pionus Codex Exec', toShellCommand(command), getPrimaryWorkspaceFolder());
 }
 
 async function runCliReview(): Promise<void> {
@@ -188,7 +201,7 @@ async function runCliReview(): Promise<void> {
   });
   const request: ReviewRequest = { mode: mode.requestMode, target, instructions };
   const command = buildReviewCliCommand(getProviderConfig(), request);
-  launchTerminal(`Pionus Codex Review: ${describeReviewRequest(request)}`, command.executable, toShellCommand(command), getPrimaryWorkspaceFolder());
+  launchTerminal(`Pionus Codex Review: ${describeReviewRequest(request)}`, toShellCommand(command), getPrimaryWorkspaceFolder());
 }
 
 async function ensureCliBridgeEnabled(): Promise<boolean> {
@@ -208,8 +221,8 @@ async function ensureCliBridgeEnabled(): Promise<boolean> {
   return false;
 }
 
-function launchTerminal(name: string, executable: string, command: string, cwd: string | undefined): void {
+function launchTerminal(name: string, command: string, cwd: string | undefined): void {
   const terminal = vscode.window.createTerminal({ name, cwd, isTransient: false });
   terminal.show();
-  terminal.sendText(`command -v ${executable} >/dev/null 2>&1 && ${command} || printf 'Pionus Codex: command not found: %s\\n' ${JSON.stringify(executable)}`);
+  terminal.sendText(command);
 }
