@@ -11,12 +11,27 @@ import { buildReviewCliCommand, describeReviewRequest, type ReviewRequest } from
 
 export function activate(context: vscode.ExtensionContext): void {
   const outputChannel = vscode.window.createOutputChannel('Pionus Codex Provider', { log: true });
-  const usageStatusBar = new UsageStatusBar(context);
+  const initialConfig = getProviderConfig();
+  const usageStatusBar = new UsageStatusBar(context, {
+    showInStatusBar: initialConfig.showUsageInStatusBar,
+    modelPricingUsdPerMTok: initialConfig.modelPricingUsdPerMTok
+  }, (diagnostic) => outputChannel.warn('Invalid model pricing configuration', diagnostic));
   const provider = new CodexModelProvider(context, outputChannel, usageStatusBar);
 
   context.subscriptions.push(
     outputChannel,
     usageStatusBar,
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration(`${getConfigurationSection()}.showUsageInStatusBar`)
+          && !event.affectsConfiguration(`${getConfigurationSection()}.modelPricingUsdPerMTok`)) {
+        return;
+      }
+      const config = getProviderConfig();
+      usageStatusBar.updateConfiguration({
+        showInStatusBar: config.showUsageInStatusBar,
+        modelPricingUsdPerMTok: config.modelPricingUsdPerMTok
+      });
+    }),
     vscode.lm.registerLanguageModelChatProvider('pionus-codex', provider),
     vscode.commands.registerCommand('pionus.codex.openDebugLogs', () => outputChannel.show(true)),
     vscode.commands.registerCommand('pionus.codex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', getConfigurationSection())),
@@ -36,12 +51,14 @@ export function activate(context: vscode.ExtensionContext): void {
       const apiKey = await vscode.window.showInputBox({ title: `Set ${target.label} API Key`, prompt: `Enter the API key for ${target.baseURL}`, password: true, ignoreFocusOut: true });
       if (apiKey?.trim()) {
         await setApiKey(context, config.baseURL, apiKey.trim());
+        provider.refreshModels();
         await vscode.window.showInformationMessage(`${target.label} API key saved.`);
       }
     }),
     vscode.commands.registerCommand('pionus.codex.clearApiKey', async () => {
       const config = getProviderConfig();
       const target = await clearApiKey(context, config.baseURL);
+      provider.refreshModels();
       await vscode.window.showInformationMessage(`${target.label} API key cleared.`);
     }),
     vscode.commands.registerCommand('pionus.codex.selectAgentProfile', async () => selectAgentProfile(outputChannel)),

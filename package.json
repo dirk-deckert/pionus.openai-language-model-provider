@@ -2,7 +2,7 @@
   "name": "openai-language-model-provider",
   "displayName": "Pionus OpenAI Language Model Provider",
   "description": "Expose Codex as a VS Code/Copilot Chat language model provider with Codex-like settings and diagnostics.",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "publisher": "pionus",
   "license": "MIT",
   "homepage": "https://github.com/dirk-deckert/pionus.openai-language-model-provider#readme",
@@ -35,17 +35,19 @@
     "check": "tsc -p ./ --noEmit",
     "compile": "npm run check && node esbuild.mjs",
     "test": "npm run check && tsc -p ./tsconfig.test.json && node --test out-test/test/*.test.js",
+    "test:integration": "npm run compile && tsc -p ./tsconfig.test.json && node test/runIntegration.mjs",
     "package": "vsce package",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile"
   },
   "dependencies": {
-    "openai": "^6.44.0",
+    "openai": "^6.48.0",
     "toml": "^3.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.30",
     "@types/vscode": "^1.104.0",
+    "@vscode/test-electron": "^3.0.0",
     "@vscode/vsce": "^3.6.2",
     "esbuild": "^0.25.5",
     "typescript": "^5.9.2"
@@ -259,7 +261,17 @@
         "pionus.codex.modelPricingUsdPerMTok": {
           "type": "object",
           "default": {},
-          "description": "Optional local pricing overrides per 1M tokens for estimated cost display."
+          "additionalProperties": {
+            "type": "object",
+            "required": ["input", "output"],
+            "properties": {
+              "input": { "type": "number", "minimum": 0 },
+              "cachedInput": { "type": "number", "minimum": 0 },
+              "output": { "type": "number", "minimum": 0 }
+            },
+            "additionalProperties": false
+          },
+          "description": "Optional per-model USD pricing for input, cached input, and output tokens per 1M tokens."
         }
       }
     }

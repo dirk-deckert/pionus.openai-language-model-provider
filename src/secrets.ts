@@ -10,7 +10,7 @@ const LEGACY_API_KEY_SECRET = 'pionus.codex.apiKey';
 const CHATGPT_API_KEY_SECRET = 'pionus.credentials.chatgpt';
 const OPENAI_API_KEY_SECRET = 'pionus.credentials.openai';
 const CUSTOM_API_KEY_PREFIX = 'pionus.credentials.endpoint.';
-const DEFAULT_USER_AGENT = 'pionus.openai-language-model-provider/0.0.2 VSCode-Extension';
+const DEFAULT_USER_AGENT = 'pionus.openai-language-model-provider/0.1.0 VSCode-Extension';
 
 export interface ApiCredentials {
   apiKey: string;
