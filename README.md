@@ -1,6 +1,6 @@
-# Pionus Codex Chat Provider
+# Pionus OpenAI Language Model Provider
 
-Repo-managed VS Code extension that exposes Codex as a VS Code/Copilot Chat language model provider under vendor `pionus-codex`.
+VS Code extension from Pionus GmbH that exposes OpenAI Codex models as a VS Code/Copilot Chat language model provider under vendor `pionus-codex`.
 
 The provider focuses on functional Codex behavior that fits inside VS Code's `LanguageModelChatProvider` API. It is intentionally not a Codex product UI and does not register sidebar views, custom editors, chat-session UI, cloud-task UI, or inline completions.
 
@@ -22,10 +22,31 @@ Inline completions are intentionally split out of this extension. A future `pion
 
 Features that require the official Codex app/sidebar/cloud runtime remain out of scope unless they can be exposed as provider-only behavior without UI coupling. This includes Codex sidebar sessions, custom Codex task editors, cloud task tracking, ChatGPT macOS app integration, and copied OpenAI extension internals or assets.
 
-Install from the synced configuration repo by running:
+The extension ID changed from `pionus.codex-chat-provider` to
+`pionus.openai-language-model-provider`. VS Code treats this as a new extension.
+Extension-scoped secret and global storage may therefore need to be configured
+again. Credentials stored in `~/.codex/auth.json` are unaffected.
+
+For source-based installation through the configuration repository, run:
 
 ```sh
 ~/clouds/gitlab-dirk-deckert/configuration/Common/vscode/install
 ```
 
-The installer symlinks this source directory into `${VSCODE_EXTENSIONS_DIR:-$HOME/.vscode/extensions}` and is portable across user names, Apple Silicon, and Intel macOS machines.
+The installer clones or fast-forwards this repository under
+`${PIONUS_VSCODE_REPOS_DIR:-$HOME/clouds/github-dirk-deckert}`, then symlinks it
+into `${VSCODE_EXTENSIONS_DIR:-$HOME/.vscode/extensions}`. It is portable across
+user names, Apple Silicon, and Intel macOS machines.
+
+## Development
+
+```sh
+npm ci
+npm test
+npm run compile
+npm run package
+```
+
+## License
+
+MIT. Copyright Pionus GmbH.

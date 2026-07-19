@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import { getProviderConfig } from './config.js';
 
 export const API_KEY_SECRET = 'pionus.codex.apiKey';
-const DEFAULT_USER_AGENT = 'pionus.codex-chat-provider/0.0.1 Codex-Extension';
+const DEFAULT_USER_AGENT = 'pionus.openai-language-model-provider/0.0.1 VSCode-Extension';
 
 export interface ApiCredentials {
   apiKey: string;

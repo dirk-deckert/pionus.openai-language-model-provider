@@ -1,4 +1,4 @@
-# Pionus Codex Chat Provider Maintenance
+# Pionus OpenAI Language Model Provider Maintenance
 
 Before changing this extension, re-check potentially stale Codex behavior against the current upstream sources:
 

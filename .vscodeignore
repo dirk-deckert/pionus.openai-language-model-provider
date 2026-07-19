@@ -1,0 +1,12 @@
+.github/**
+.gitignore
+AGENTS.md
+SECURITY.md
+test/**
+src/**
+tsconfig*.json
+esbuild.mjs
+out-test/**
+node_modules/**
+dist/*.map
+*.vsix

@@ -14560,7 +14560,7 @@ var import_promises = require("node:fs/promises");
 var import_node_os = require("node:os");
 var import_node_path = require("node:path");
 var API_KEY_SECRET = "pionus.codex.apiKey";
-var DEFAULT_USER_AGENT = "pionus.codex-chat-provider/0.0.1 Codex-Extension";
+var DEFAULT_USER_AGENT = "pionus.openai-language-model-provider/0.0.1 VSCode-Extension";
 async function getApiCredentials(context) {
   const config = getProviderConfig();
   if (config.credentialsSource === "secretStorage") {
