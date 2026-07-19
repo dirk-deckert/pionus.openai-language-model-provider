@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- Add a dedicated Pionus OpenAI Language Model Provider extension icon.
+
 ## 0.1.0
 
 - Add endpoint-specific model discovery for ChatGPT Codex, the official OpenAI API, and custom Responses-compatible endpoints.

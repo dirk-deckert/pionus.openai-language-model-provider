@@ -2,9 +2,10 @@
   "name": "openai-language-model-provider",
   "displayName": "Pionus OpenAI Language Model Provider",
   "description": "Expose Codex as a VS Code/Copilot Chat language model provider with Codex-like settings and diagnostics.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "pionus",
   "license": "MIT",
+  "icon": "assets/icon.png",
   "homepage": "https://github.com/dirk-deckert/pionus.openai-language-model-provider#readme",
   "repository": {
     "type": "git",

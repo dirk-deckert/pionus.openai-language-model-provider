@@ -62,14 +62,14 @@ interface ManifestSetting {
   scope?: string;
 }
 
-test('manifest preserves the exact 0.0.x public compatibility surface at 0.1.0', async () => {
+test('manifest preserves the exact 0.0.x public compatibility surface at 0.1.1', async () => {
   const manifest = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')) as Record<string, any>;
 
   assert.equal(`${manifest.publisher}.${manifest.name}`, 'pionus.openai-language-model-provider');
   assert.equal(manifest.name, 'openai-language-model-provider');
   assert.equal(manifest.displayName, 'Pionus OpenAI Language Model Provider');
   assert.equal(manifest.publisher, 'pionus');
-  assert.equal(manifest.version, '0.1.0');
+  assert.equal(manifest.version, '0.1.1');
   assert.equal(manifest.main, './dist/extension.js');
   assert.equal(manifest.engines.vscode, '^1.104.0');
 
