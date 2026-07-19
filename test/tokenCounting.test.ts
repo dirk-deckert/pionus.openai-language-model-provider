@@ -55,6 +55,27 @@ test('exact input-token counting sends the converted input policy to the endpoin
   assert.equal(calls, 1, 'the mocked endpoint must be the only network boundary exercised');
 });
 
+test('exact input-token counting supports the ChatGPT Codex endpoint and account header', async () => {
+  await withMockFetch(async (url, init) => {
+    assert.equal(String(url), 'https://chatgpt.com/backend-api/codex/responses/input_tokens');
+    assert.equal(new Headers(init?.headers).get('chatgpt-account-id'), 'account-1');
+    return new Response(JSON.stringify({ input_tokens: 42 }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }, async () => {
+    const count = await countInputTokens({
+      baseURL: 'https://chatgpt.com/backend-api/codex/responses',
+      apiKey: 'fake-chatgpt-token',
+      headers: { 'ChatGPT-Account-ID': 'account-1' },
+      model: 'gpt-5.6-sol',
+      input: 'hello',
+      token: NEVER_CANCELLED_TOKEN as never
+    });
+    assert.equal(count, 42);
+  });
+});
+
 test('input-token endpoint failures retain provider error categories and causes', async () => {
   const cases = [
     { status: 401, body: { error: { code: 'invalid_api_key', message: 'Bad fake key.' } }, kind: 'noPermissions' },

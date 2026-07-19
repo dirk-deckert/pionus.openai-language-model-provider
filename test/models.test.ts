@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { OPENAI_MODEL_CATALOG, OPENAI_MODEL_CATALOG_REVIEWED_AT, OPENAI_MODEL_GUIDANCE_URL } from '../src/modelCatalog.js';
+import {
+  MODEL_DEFINITIONS,
+  OPENAI_MODEL_CATALOG,
+  OPENAI_MODEL_CATALOG_REVIEWED_AT,
+  OPENAI_MODEL_GUIDANCE_URL,
+  getCompatibilityFallbackDefinitions
+} from '../src/modelCatalog.js';
 import { buildProviderModels, fetchAvailableModels, parseModelIdentifier, resolveModelMetadata } from '../src/models.js';
 import { baseConfig } from './helpers.js';
 
@@ -30,6 +36,23 @@ test('fallback models retain every pre-0.1 base and Fast identifier', () => {
   assert.equal(models.find((model) => model.info.id === 'codex::gpt-5.6-sol')?.info.maxInputTokens, 272_000);
   assert.equal(ids.size, models.length, 'fallback provider IDs must be unique');
   assert.equal(parseModelIdentifier('codex::gpt-5.6-sol::tier=fast').serviceTier, 'fast');
+});
+
+test('one model registry derives unique catalog and ordered compatibility fallbacks', () => {
+  assert.equal(new Set(MODEL_DEFINITIONS.map((definition) => definition.id)).size, MODEL_DEFINITIONS.length);
+  assert.deepEqual(getCompatibilityFallbackDefinitions().map((definition) => definition.id), [
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+    'gpt-5.5',
+    'gpt-5.4',
+    'gpt-5.4-mini'
+  ]);
+  assert.deepEqual(OPENAI_MODEL_CATALOG.map((entry) => entry.id), MODEL_DEFINITIONS
+    .filter((definition) => definition.openAI)
+    .map((definition) => definition.id));
+  assert.equal(MODEL_DEFINITIONS.find((definition) => definition.id === 'gpt-5.6-sol')?.fallback?.defaultReasoningEffort, 'low');
+  assert.equal(OPENAI_MODEL_CATALOG.find((entry) => entry.id === 'gpt-5.6-sol')?.defaultReasoningEffort, 'medium');
 });
 
 test('ChatGPT discovery records service-tier availability without removing compatibility Fast entries', () => {

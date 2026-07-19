@@ -38,9 +38,11 @@ For cataloged OpenAI API models, VS Code receives the reviewed input limit, maxi
 - VS Code host tools map one-to-one to OpenAI function tools. Automatic and required tool choice are preserved, and completed calls stream back as VS Code tool-call parts.
 - Text, supported reasoning output, refusals, function calls, completion, failure, incomplete response, and cancellation events are handled explicitly. Unknown future stream events are logged for diagnostics without being exposed as invented content.
 - Permission, missing-model, and rate-limit/quota failures map to the closest VS Code language-model error. Transport, malformed-stream, incomplete, and server failures retain their original cause.
-- Token counting uses the Responses input-token endpoint where supported and a conservative local estimate otherwise. Message and image conversion follows the same policy for counting and requests.
+- Token counting attempts the Responses input-token endpoint for ChatGPT Codex, OpenAI API, and custom endpoints. Definitively unsupported endpoints are remembered for ten minutes; all unsupported or unavailable cases retain the conservative local estimate. Message and image conversion follows the same policy for counting and requests.
 
-Reasoning presentation uses a guarded VS Code thinking part when the runtime provides it. Explicit reasoning model variants remain the stable selection mechanism on runtimes without that API.
+Reasoning presentation uses a guarded VS Code thinking part when the runtime provides it. Stable VS Code currently has no reasoning response part, so reasoning is not converted into ordinary answer text or a proprietary data part. Explicit reasoning model variants remain the stable selection mechanism on runtimes without that API.
+
+Each request is intentionally stateless (`store: false`) and does not use `previous_response_id`. Copilot supplies the complete conversation history in each provider request, so the provider does not maintain a second conversation state.
 
 ## Codex enhancements
 

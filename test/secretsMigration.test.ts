@@ -23,6 +23,7 @@ function createSecretContext(values: Readonly<Record<string, string | undefined>
   const operations: SecretOperations = { reads: [], stores: [], deletes: [] };
   return {
     context: {
+      extension: { packageJSON: { version: '0.1.3' } },
       secrets: {
         get: async (key: string) => {
           operations.reads.push(key);
@@ -57,7 +58,7 @@ test('legacy SecretStorage keys migrate to each official endpoint-specific key',
     assert.deepEqual(operations.deletes, []);
     assert.deepEqual(credentials, {
       apiKey: 'fake-legacy-token',
-      headers: { 'User-Agent': 'pionus.openai-language-model-provider/0.1.0 VSCode-Extension' },
+      headers: { 'User-Agent': 'pionus.openai-language-model-provider/0.1.3 VSCode-Extension' },
       source: 'secretStorage',
       omitMaxOutputTokens: false
     });

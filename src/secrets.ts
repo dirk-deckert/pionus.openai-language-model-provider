@@ -10,7 +10,7 @@ const LEGACY_API_KEY_SECRET = 'pionus.codex.apiKey';
 const CHATGPT_API_KEY_SECRET = 'pionus.credentials.chatgpt';
 const OPENAI_API_KEY_SECRET = 'pionus.credentials.openai';
 const CUSTOM_API_KEY_PREFIX = 'pionus.credentials.endpoint.';
-const DEFAULT_USER_AGENT = 'pionus.openai-language-model-provider/0.1.0 VSCode-Extension';
+const USER_AGENT_PRODUCT = 'pionus.openai-language-model-provider';
 
 export interface ApiCredentials {
   apiKey: string;
@@ -74,14 +74,15 @@ export async function getApiCredentials(
   credentialsSource: CredentialsSource
 ): Promise<ApiCredentials | undefined> {
   const target = classifyCredentialTarget(baseURL);
+  const userAgent = buildExtensionUserAgent(readExtensionVersion(context));
   if (credentialsSource === 'secretStorage') {
-    return readSecretStorageCredentials(context, target);
+    return readSecretStorageCredentials(context, target, userAgent);
   }
   if (credentialsSource === 'codexAuth') {
-    return readCodexAuthCredentials(target);
+    return readCodexAuthCredentials(target, userAgent);
   }
 
-  return await readCodexAuthCredentials(target) ?? await readSecretStorageCredentials(context, target);
+  return await readCodexAuthCredentials(target, userAgent) ?? await readSecretStorageCredentials(context, target, userAgent);
 }
 
 export async function setApiKey(context: vscode.ExtensionContext, baseURL: string, apiKey: string): Promise<CredentialTarget> {
@@ -99,9 +100,18 @@ export async function clearApiKey(context: vscode.ExtensionContext, baseURL: str
   return target;
 }
 
-export function selectCodexAuthCredentials(auth: CodexAuthFile, target: CredentialTarget): ApiCredentials | undefined {
+export function buildExtensionUserAgent(version: unknown): string {
+  const normalizedVersion = typeof version === 'string' && version.trim() ? version.trim() : 'unknown';
+  return `${USER_AGENT_PRODUCT}/${normalizedVersion} VSCode-Extension`;
+}
+
+export function selectCodexAuthCredentials(
+  auth: CodexAuthFile,
+  target: CredentialTarget,
+  userAgent = buildExtensionUserAgent(undefined)
+): ApiCredentials | undefined {
   if (target.kind === 'chatgpt' && typeof auth.tokens?.access_token === 'string' && auth.tokens.access_token.trim()) {
-    const headers: Record<string, string> = { 'User-Agent': DEFAULT_USER_AGENT };
+    const headers: Record<string, string> = { 'User-Agent': userAgent };
     if (typeof auth.tokens.account_id === 'string' && auth.tokens.account_id.trim()) {
       headers['ChatGPT-Account-ID'] = auth.tokens.account_id.trim();
     }
@@ -116,7 +126,7 @@ export function selectCodexAuthCredentials(auth: CodexAuthFile, target: Credenti
   if (target.kind === 'openai' && typeof auth.OPENAI_API_KEY === 'string' && auth.OPENAI_API_KEY.trim()) {
     return {
       apiKey: auth.OPENAI_API_KEY.trim(),
-      headers: { 'User-Agent': DEFAULT_USER_AGENT },
+      headers: { 'User-Agent': userAgent },
       source: 'codexAuth',
       omitMaxOutputTokens: false
     };
@@ -124,19 +134,23 @@ export function selectCodexAuthCredentials(auth: CodexAuthFile, target: Credenti
   return undefined;
 }
 
-async function readCodexAuthCredentials(target: CredentialTarget): Promise<ApiCredentials | undefined> {
+async function readCodexAuthCredentials(target: CredentialTarget, userAgent: string): Promise<ApiCredentials | undefined> {
   if (target.kind === 'custom') {
     return undefined;
   }
   try {
     const raw = await readFile(join(homedir(), '.codex', 'auth.json'), 'utf8');
-    return selectCodexAuthCredentials(JSON.parse(raw) as CodexAuthFile, target);
+    return selectCodexAuthCredentials(JSON.parse(raw) as CodexAuthFile, target, userAgent);
   } catch {
     return undefined;
   }
 }
 
-async function readSecretStorageCredentials(context: vscode.ExtensionContext, target: CredentialTarget): Promise<ApiCredentials | undefined> {
+async function readSecretStorageCredentials(
+  context: vscode.ExtensionContext,
+  target: CredentialTarget,
+  userAgent: string
+): Promise<ApiCredentials | undefined> {
   const targetKey = getCredentialSecretKey(target);
   let stored = await context.secrets.get(targetKey);
   if (!stored?.trim() && target.kind !== 'custom') {
@@ -151,8 +165,12 @@ async function readSecretStorageCredentials(context: vscode.ExtensionContext, ta
 
   return {
     apiKey: stored.trim(),
-    headers: { 'User-Agent': DEFAULT_USER_AGENT },
+    headers: { 'User-Agent': userAgent },
     source: 'secretStorage',
     omitMaxOutputTokens: false
   };
+}
+
+function readExtensionVersion(context: vscode.ExtensionContext): unknown {
+  return (context.extension?.packageJSON as { version?: unknown } | undefined)?.version;
 }

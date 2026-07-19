@@ -9,6 +9,7 @@ import { clearActiveSkillIds, discoverSkills, getActiveSkillIds, setActiveSkillI
 import { buildReadOnlyCliCommand, toShellCommand } from './cliBridge.js';
 import { buildReviewCliCommand, describeReviewRequest, type ReviewRequest } from './review.js';
 import { EXTENSION_DISPLAY_NAME } from './branding.js';
+import { MANAGEMENT_ACTIONS } from './managementActions.js';
 
 export function activate(context: vscode.ExtensionContext): void {
   const outputChannel = vscode.window.createOutputChannel(EXTENSION_DISPLAY_NAME, { log: true });
@@ -75,45 +76,14 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('pionus.codex.showStatus', () => provider.showStatus()),
     vscode.commands.registerCommand('pionus.codex.showLastUsage', () => usageStatusBar.showLastUsage()),
     vscode.commands.registerCommand('pionus.codex.manage', async () => {
-      const action = await vscode.window.showQuickPick([
-        'Show Status',
-        'View Last Usage',
-        'Select Agent Profile',
-        'Reset Agent Profile',
-        'Copy IDE Context Snapshot',
-        'Select Skills',
-        'Clear Skills',
-        'Run CLI Exec',
-        'Run CLI Review',
-        'Open Debug Logs',
-        'Set API Key',
-        'Clear API Key',
-        'Open Settings'
-      ], { title: EXTENSION_DISPLAY_NAME });
+      const action = await vscode.window.showQuickPick(MANAGEMENT_ACTIONS, { title: EXTENSION_DISPLAY_NAME });
       if (!action) {
         return;
       }
-      const commandMap: Record<string, string> = {
-        'Show Status': 'pionus.codex.showStatus',
-        'View Last Usage': 'pionus.codex.showLastUsage',
-        'Select Agent Profile': 'pionus.codex.selectAgentProfile',
-        'Reset Agent Profile': 'pionus.codex.resetAgentProfile',
-        'Copy IDE Context Snapshot': 'pionus.codex.copyContextSnapshot',
-        'Select Skills': 'pionus.codex.selectSkills',
-        'Clear Skills': 'pionus.codex.clearSkills',
-        'Run CLI Exec': 'pionus.codex.runCliExec',
-        'Run CLI Review': 'pionus.codex.runCliReview',
-        'Open Debug Logs': 'pionus.codex.openDebugLogs',
-        'Set API Key': 'pionus.codex.setApiKey',
-        'Clear API Key': 'pionus.codex.clearApiKey',
-        'Open Settings': 'pionus.codex.openSettings'
-      };
-      await vscode.commands.executeCommand(commandMap[action]);
+      await vscode.commands.executeCommand(action.command);
     })
   );
 }
-
-export function deactivate(): void {}
 
 async function selectAgentProfile(outputChannel: vscode.LogOutputChannel): Promise<void> {
   const profiles = await loadAgentProfiles(getProviderConfig(), outputChannel);

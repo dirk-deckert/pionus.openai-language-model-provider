@@ -5,14 +5,21 @@ import { runTests } from '@vscode/test-electron';
 
 const extensionDevelopmentPath = resolve(import.meta.dirname, '..');
 const extensionTestsPath = resolve(extensionDevelopmentPath, 'out-test', 'test', 'integration', 'index.js');
-const isolatedHome = await mkdtemp(join(tmpdir(), 'pionus-vscode-test-home-'));
+const isolatedHome = await mkdtemp(join(tmpdir(), 'pv-'));
+const userDataDir = join(isolatedHome, 'u');
+const extensionsDir = join(isolatedHome, 'e');
 
 try {
   await runTests({
     extensionDevelopmentPath,
     extensionTestsPath,
     version: process.env.VSCODE_TEST_VERSION || 'stable',
-    launchArgs: ['--disable-extensions', '--disable-workspace-trust'],
+    launchArgs: [
+      '--disable-extensions',
+      '--disable-workspace-trust',
+      '--user-data-dir', userDataDir,
+      '--extensions-dir', extensionsDir
+    ],
     extensionTestsEnv: {
       HOME: isolatedHome,
       USERPROFILE: isolatedHome,

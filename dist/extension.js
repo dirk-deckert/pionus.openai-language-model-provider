@@ -3777,8 +3777,7 @@ var require_toml = __commonJS({
 // src/extension.ts
 var extension_exports = {};
 __export(extension_exports, {
-  activate: () => activate,
-  deactivate: () => deactivate
+  activate: () => activate
 });
 module.exports = __toCommonJS(extension_exports);
 var vscode7 = __toESM(require("vscode"));
@@ -4028,8 +4027,9 @@ function getEnum(config, key, allowed, fallback) {
 // src/modelCatalog.ts
 var OPENAI_MODEL_CATALOG_REVIEWED_AT = "2026-07-19";
 var OPENAI_MODEL_GUIDANCE_URL = "https://developers.openai.com/api/docs/guides/latest-model";
-var OPENAI_MODEL_CATALOG = [
+var MODEL_DEFINITIONS = [
   {
+    openAI: true,
     id: "gpt-5.6-sol",
     aliases: ["gpt-5.6"],
     name: "GPT-5.6 Sol",
@@ -4043,9 +4043,11 @@ var OPENAI_MODEL_CATALOG = [
     defaultReasoningEffort: "medium",
     sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
     sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.6-sol", OPENAI_MODEL_GUIDANCE_URL],
-    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT,
+    fallback: { pickerOrder: 0, maxInputTokens: 272e3, imageInput: true, defaultReasoningEffort: "low" }
   },
   {
+    openAI: true,
     id: "gpt-5.6-terra",
     aliases: [],
     name: "GPT-5.6 Terra",
@@ -4059,9 +4061,11 @@ var OPENAI_MODEL_CATALOG = [
     defaultReasoningEffort: "medium",
     sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
     sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.6-terra", OPENAI_MODEL_GUIDANCE_URL],
-    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT,
+    fallback: { pickerOrder: 1, maxInputTokens: 272e3, imageInput: true, defaultReasoningEffort: "medium" }
   },
   {
+    openAI: true,
     id: "gpt-5.6-luna",
     aliases: [],
     name: "GPT-5.6 Luna",
@@ -4075,9 +4079,11 @@ var OPENAI_MODEL_CATALOG = [
     defaultReasoningEffort: "medium",
     sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
     sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.6-luna", OPENAI_MODEL_GUIDANCE_URL],
-    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT,
+    fallback: { pickerOrder: 2, maxInputTokens: 272e3, imageInput: true, defaultReasoningEffort: "medium" }
   },
   {
+    openAI: true,
     id: "gpt-5.5",
     aliases: ["gpt-5.5-2026-04-23"],
     name: "GPT-5.5",
@@ -4091,9 +4097,11 @@ var OPENAI_MODEL_CATALOG = [
     defaultReasoningEffort: "medium",
     sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.5",
     sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.5"],
-    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT,
+    fallback: { pickerOrder: 3, maxInputTokens: 272e3, imageInput: true, defaultReasoningEffort: "medium" }
   },
   {
+    openAI: true,
     id: "gpt-5.5-pro",
     aliases: ["gpt-5.5-pro-2026-04-23"],
     name: "GPT-5.5 Pro",
@@ -4110,6 +4118,7 @@ var OPENAI_MODEL_CATALOG = [
     reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
   },
   {
+    openAI: true,
     id: "gpt-5.4",
     aliases: ["gpt-5.4-2026-03-05"],
     name: "GPT-5.4",
@@ -4123,9 +4132,11 @@ var OPENAI_MODEL_CATALOG = [
     defaultReasoningEffort: "none",
     sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.4",
     sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.4"],
-    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT,
+    fallback: { pickerOrder: 4, maxInputTokens: 272e3, imageInput: true, defaultReasoningEffort: "medium" }
   },
   {
+    openAI: true,
     id: "gpt-5.4-pro",
     aliases: ["gpt-5.4-pro-2026-03-05"],
     name: "GPT-5.4 Pro",
@@ -4142,6 +4153,7 @@ var OPENAI_MODEL_CATALOG = [
     reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
   },
   {
+    openAI: true,
     id: "gpt-5.4-mini",
     aliases: ["gpt-5.4-mini-2026-03-17"],
     name: "GPT-5.4 Mini",
@@ -4155,9 +4167,11 @@ var OPENAI_MODEL_CATALOG = [
     defaultReasoningEffort: "none",
     sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.4-mini",
     sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.4-mini"],
-    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT,
+    fallback: { pickerOrder: 5, maxInputTokens: 272e3, imageInput: true, defaultReasoningEffort: "medium" }
   },
   {
+    openAI: true,
     id: "gpt-5.4-nano",
     aliases: ["gpt-5.4-nano-2026-03-17"],
     name: "GPT-5.4 Nano",
@@ -4172,8 +4186,28 @@ var OPENAI_MODEL_CATALOG = [
     sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.4-nano",
     sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.4-nano"],
     reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+  },
+  {
+    id: "gpt-5.3-codex-spark-preview",
+    aliases: [],
+    openAI: false,
+    fallback: { defaultReasoningEffort: "high" }
+  },
+  {
+    id: "codex-auto-review",
+    aliases: [],
+    openAI: false,
+    fallback: { defaultReasoningEffort: "medium" }
   }
 ];
+var OPENAI_MODEL_CATALOG = MODEL_DEFINITIONS.filter((definition) => definition.openAI).map(({ openAI: _openAI, fallback: _fallback, ...entry }) => entry);
+function findModelDefinition(modelId) {
+  const normalized = modelId.trim();
+  return MODEL_DEFINITIONS.find((definition) => definition.id === normalized);
+}
+function getCompatibilityFallbackDefinitions() {
+  return MODEL_DEFINITIONS.filter((definition) => definition.fallback?.pickerOrder !== void 0).sort((left, right) => (left.fallback?.pickerOrder ?? 0) - (right.fallback?.pickerOrder ?? 0));
+}
 function findOpenAIModelCatalogEntry(modelId) {
   const normalized = modelId.trim();
   return OPENAI_MODEL_CATALOG.find((entry) => entry.id === normalized || entry.aliases.includes(normalized));
@@ -4189,16 +4223,6 @@ var PROVIDER_MODEL_ID_PREFIX = "codex::";
 var REASONING_ID_DELIMITER = "::reasoning=";
 var FAST_ID_SUFFIX = "::tier=fast";
 var DEFAULT_INPUT_LIMIT = 272e3;
-var MODEL_DEFAULT_REASONING = {
-  "gpt-5.6-sol": "low",
-  "gpt-5.6-terra": "medium",
-  "gpt-5.6-luna": "medium",
-  "gpt-5.5": "medium",
-  "gpt-5.4": "medium",
-  "gpt-5.4-mini": "medium",
-  "gpt-5.3-codex-spark-preview": "high",
-  "codex-auto-review": "medium"
-};
 var REASONING_LABELS = {
   none: "None",
   minimal: "Minimal",
@@ -4209,14 +4233,6 @@ var REASONING_LABELS = {
   max: "Max",
   ultra: "Ultra"
 };
-var FALLBACK_MODELS = [
-  { requestModel: "gpt-5.6-sol", maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
-  { requestModel: "gpt-5.6-terra", maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
-  { requestModel: "gpt-5.6-luna", maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
-  { requestModel: "gpt-5.5", maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
-  { requestModel: "gpt-5.4", maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
-  { requestModel: "gpt-5.4-mini", maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true }
-];
 async function fetchAvailableModels(config, credentials, token, target = "chatgpt") {
   const modelsURL = new URL(`${normalizeBaseURL(config.baseURL)}/models`);
   if (target === "chatgpt") {
@@ -4256,16 +4272,13 @@ function buildFallbackModels(config, target = "chatgpt") {
     const metadata = resolveModelMetadata(config.model, target, config);
     return metadata?.streaming ? buildModelVariants(config, metadata) : [];
   }
-  const pinnedModels = FALLBACK_MODELS.flatMap((model) => buildModelVariants(config, buildFallbackMetadata(config, model)));
-  if (FALLBACK_MODELS.some((model) => model.requestModel === config.model)) {
+  const fallbackDefinitions = getCompatibilityFallbackDefinitions();
+  const pinnedModels = fallbackDefinitions.flatMap((definition) => buildModelVariants(config, buildFallbackMetadata(config, definition)));
+  if (fallbackDefinitions.some((definition) => definition.id === config.model)) {
     return pinnedModels;
   }
   return [
-    ...buildModelVariants(config, buildFallbackMetadata(config, {
-      requestModel: config.model,
-      maxInputTokens: DEFAULT_INPUT_LIMIT,
-      imageInput: false
-    })),
+    ...buildModelVariants(config, buildFallbackMetadata(config, config.model)),
     ...pinnedModels
   ];
 }
@@ -4279,12 +4292,7 @@ function resolveModelMetadata(modelId, target, config = { model: "gpt-5.6-sol", 
     const entry = findOpenAIModelCatalogEntry(requestModel);
     return entry ? buildOpenAIMetadata(requestModel, entry) : void 0;
   }
-  const fallback = FALLBACK_MODELS.find((model) => model.requestModel === requestModel);
-  return buildFallbackMetadata(config, fallback ?? {
-    requestModel,
-    maxInputTokens: DEFAULT_INPUT_LIMIT,
-    imageInput: false
-  });
+  return buildFallbackMetadata(config, findModelDefinition(requestModel) ?? requestModel);
 }
 function parseModelIdentifier(modelId) {
   let normalized = modelId.startsWith(PROVIDER_MODEL_ID_PREFIX) ? modelId.slice(PROVIDER_MODEL_ID_PREFIX.length) : modelId;
@@ -4310,8 +4318,9 @@ function resolveDiscoveredModelMetadata(model, target, config) {
     const catalogEntry = findOpenAIModelCatalogEntry(requestModel);
     return catalogEntry?.streaming ? buildOpenAIMetadata(requestModel, catalogEntry) : void 0;
   }
-  const defaultReasoningEffort = normalizeReasoningEffort2(model.default_reasoning_level) ?? MODEL_DEFAULT_REASONING[requestModel];
-  const reasoningOptions = getReasoningOptions(model, requestModel, defaultReasoningEffort);
+  const fallbackReasoningEffort = findModelDefinition(requestModel)?.fallback?.defaultReasoningEffort;
+  const defaultReasoningEffort = normalizeReasoningEffort2(model.default_reasoning_level) ?? fallbackReasoningEffort;
+  const reasoningOptions = getReasoningOptions(model, defaultReasoningEffort);
   const maxOutputTokens = getPositiveInteger(model.max_output_tokens) ?? config.maxOutputTokens;
   const advertisedContext = getPositiveInteger(model.context_window);
   const maxInputTokens = advertisedContext ?? DEFAULT_INPUT_LIMIT;
@@ -4356,15 +4365,17 @@ function buildOpenAIMetadata(requestModel, entry) {
   };
 }
 function buildFallbackMetadata(config, model) {
-  const defaultReasoningEffort = MODEL_DEFAULT_REASONING[model.requestModel];
+  const requestModel = typeof model === "string" ? model : model.id;
+  const fallback = typeof model === "string" ? void 0 : model.fallback;
+  const defaultReasoningEffort = fallback?.defaultReasoningEffort;
   return {
-    requestModel: model.requestModel,
-    name: formatDisplayName(model.requestModel),
+    requestModel,
+    name: formatDisplayName(requestModel),
     tooltip: "Conservative fallback model used when discovery metadata is unavailable.",
     version: "1.0.0",
-    maxInputTokens: model.maxInputTokens,
+    maxInputTokens: fallback?.maxInputTokens ?? DEFAULT_INPUT_LIMIT,
     maxOutputTokens: config.maxOutputTokens,
-    imageInput: model.imageInput,
+    imageInput: fallback?.imageInput ?? false,
     toolCalling: true,
     streaming: true,
     fastTierAvailability: "unknown",
@@ -4428,7 +4439,7 @@ function buildThinkingEffortSchema(reasoningOptions, defaultEffort) {
     }
   };
 }
-function getReasoningOptions(model, modelId, defaultReasoningEffort) {
+function getReasoningOptions(model, defaultReasoningEffort) {
   const options = [];
   if (defaultReasoningEffort) {
     options.push(toReasoningOption(defaultReasoningEffort));
@@ -4450,9 +4461,6 @@ function getReasoningOptions(model, modelId, defaultReasoningEffort) {
         options.push(option);
       }
     }
-  }
-  if (options.length === 0 && MODEL_DEFAULT_REASONING[modelId]) {
-    options.push(toReasoningOption(MODEL_DEFAULT_REASONING[modelId]));
   }
   return options;
 }
@@ -15822,7 +15830,7 @@ var LEGACY_API_KEY_SECRET = "pionus.codex.apiKey";
 var CHATGPT_API_KEY_SECRET = "pionus.credentials.chatgpt";
 var OPENAI_API_KEY_SECRET = "pionus.credentials.openai";
 var CUSTOM_API_KEY_PREFIX = "pionus.credentials.endpoint.";
-var DEFAULT_USER_AGENT = "pionus.openai-language-model-provider/0.1.0 VSCode-Extension";
+var USER_AGENT_PRODUCT = "pionus.openai-language-model-provider";
 function classifyCredentialTarget(baseURL) {
   const normalized = normalizeBaseURL(baseURL);
   let url;
@@ -15857,13 +15865,14 @@ function getCredentialSecretKey(target) {
 }
 async function getApiCredentials(context, baseURL, credentialsSource) {
   const target = classifyCredentialTarget(baseURL);
+  const userAgent = buildExtensionUserAgent(readExtensionVersion(context));
   if (credentialsSource === "secretStorage") {
-    return readSecretStorageCredentials(context, target);
+    return readSecretStorageCredentials(context, target, userAgent);
   }
   if (credentialsSource === "codexAuth") {
-    return readCodexAuthCredentials(target);
+    return readCodexAuthCredentials(target, userAgent);
   }
-  return await readCodexAuthCredentials(target) ?? await readSecretStorageCredentials(context, target);
+  return await readCodexAuthCredentials(target, userAgent) ?? await readSecretStorageCredentials(context, target, userAgent);
 }
 async function setApiKey(context, baseURL, apiKey) {
   const target = classifyCredentialTarget(baseURL);
@@ -15878,9 +15887,13 @@ async function clearApiKey(context, baseURL) {
   }
   return target;
 }
-function selectCodexAuthCredentials(auth, target) {
+function buildExtensionUserAgent(version) {
+  const normalizedVersion = typeof version === "string" && version.trim() ? version.trim() : "unknown";
+  return `${USER_AGENT_PRODUCT}/${normalizedVersion} VSCode-Extension`;
+}
+function selectCodexAuthCredentials(auth, target, userAgent = buildExtensionUserAgent(void 0)) {
   if (target.kind === "chatgpt" && typeof auth.tokens?.access_token === "string" && auth.tokens.access_token.trim()) {
-    const headers = { "User-Agent": DEFAULT_USER_AGENT };
+    const headers = { "User-Agent": userAgent };
     if (typeof auth.tokens.account_id === "string" && auth.tokens.account_id.trim()) {
       headers["ChatGPT-Account-ID"] = auth.tokens.account_id.trim();
     }
@@ -15894,25 +15907,25 @@ function selectCodexAuthCredentials(auth, target) {
   if (target.kind === "openai" && typeof auth.OPENAI_API_KEY === "string" && auth.OPENAI_API_KEY.trim()) {
     return {
       apiKey: auth.OPENAI_API_KEY.trim(),
-      headers: { "User-Agent": DEFAULT_USER_AGENT },
+      headers: { "User-Agent": userAgent },
       source: "codexAuth",
       omitMaxOutputTokens: false
     };
   }
   return void 0;
 }
-async function readCodexAuthCredentials(target) {
+async function readCodexAuthCredentials(target, userAgent) {
   if (target.kind === "custom") {
     return void 0;
   }
   try {
     const raw = await (0, import_promises.readFile)((0, import_node_path.join)((0, import_node_os.homedir)(), ".codex", "auth.json"), "utf8");
-    return selectCodexAuthCredentials(JSON.parse(raw), target);
+    return selectCodexAuthCredentials(JSON.parse(raw), target, userAgent);
   } catch {
     return void 0;
   }
 }
-async function readSecretStorageCredentials(context, target) {
+async function readSecretStorageCredentials(context, target, userAgent) {
   const targetKey = getCredentialSecretKey(target);
   let stored = await context.secrets.get(targetKey);
   if (!stored?.trim() && target.kind !== "custom") {
@@ -15926,10 +15939,13 @@ async function readSecretStorageCredentials(context, target) {
   }
   return {
     apiKey: stored.trim(),
-    headers: { "User-Agent": DEFAULT_USER_AGENT },
+    headers: { "User-Agent": userAgent },
     source: "secretStorage",
     omitMaxOutputTokens: false
   };
+}
+function readExtensionVersion(context) {
+  return context.extension?.packageJSON?.version;
 }
 
 // src/branding.ts
@@ -16280,6 +16296,59 @@ function slugify2(value) {
   return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "skill";
 }
 
+// src/tokenCountPolicy.ts
+var INPUT_TOKEN_SUPPORT_TTL_MS = 10 * 60 * 1e3;
+var InputTokenEndpointSupportCache = class {
+  constructor(now = Date.now, ttlMs = INPUT_TOKEN_SUPPORT_TTL_MS) {
+    this.now = now;
+    this.ttlMs = ttlMs;
+  }
+  entries = /* @__PURE__ */ new Map();
+  canAttempt(baseURL) {
+    return this.get(baseURL) !== "unsupported";
+  }
+  markSupported(baseURL) {
+    this.set(baseURL, "supported");
+  }
+  markUnsupported(baseURL) {
+    this.set(baseURL, "unsupported");
+  }
+  recordFailure(baseURL, error) {
+    if (!isDefinitivelyUnsupportedInputTokenEndpoint(error)) {
+      return false;
+    }
+    this.markUnsupported(baseURL);
+    return true;
+  }
+  get(baseURL) {
+    const key = normalizeBaseURL(baseURL);
+    const entry = this.entries.get(key);
+    if (!entry) {
+      return void 0;
+    }
+    if (entry.expiresAt <= this.now()) {
+      this.entries.delete(key);
+      return void 0;
+    }
+    return entry.support;
+  }
+  set(baseURL, support) {
+    this.entries.set(normalizeBaseURL(baseURL), {
+      support,
+      expiresAt: this.now() + this.ttlMs
+    });
+  }
+};
+function isDefinitivelyUnsupportedInputTokenEndpoint(error) {
+  if (!(error instanceof ResponsesTransportError)) {
+    return false;
+  }
+  if (error.status === 405 || error.status === 501) {
+    return true;
+  }
+  return error.status === 404 && error.kind !== "notFound";
+}
+
 // src/provider.ts
 var USAGE_DATA_PART_MIME2 = "usage";
 var CodexModelProvider = class {
@@ -16300,6 +16369,7 @@ var CodexModelProvider = class {
   }
   onDidChangeLanguageModelChatInformation;
   modelInfoChangedEmitter = new vscode5.EventEmitter();
+  inputTokenEndpointSupport = new InputTokenEndpointSupportCache();
   cachedModels;
   refreshModels() {
     this.cachedModels = void 0;
@@ -16542,11 +16612,11 @@ var CodexModelProvider = class {
     const fallbackTokenCount = estimateConvertedTokenCount(text, input);
     const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
     throwIfCancellationRequested(token);
-    if (!credentials || target === "chatgpt") {
+    if (!credentials || !this.inputTokenEndpointSupport.canAttempt(config.baseURL)) {
       return fallbackTokenCount;
     }
     try {
-      return await countInputTokens({
+      const exactTokenCount = await countInputTokens({
         baseURL: config.baseURL,
         apiKey: credentials.apiKey,
         headers: credentials.headers,
@@ -16554,8 +16624,11 @@ var CodexModelProvider = class {
         input,
         token
       });
+      this.inputTokenEndpointSupport.markSupported(config.baseURL);
+      return exactTokenCount;
     } catch (error) {
       throwIfCancellationRequested(token);
+      this.inputTokenEndpointSupport.recordFailure(config.baseURL, error);
       this.outputChannel.debug("Exact Responses input-token count unavailable; using local estimate", {
         model: parsedModel.requestModel,
         target,
@@ -16954,6 +17027,23 @@ function getReviewTargetArgs(request) {
   return [];
 }
 
+// src/managementActions.ts
+var MANAGEMENT_ACTIONS = [
+  { label: "Show Status", command: "pionus.codex.showStatus" },
+  { label: "View Last Usage", command: "pionus.codex.showLastUsage" },
+  { label: "Select Agent Profile", command: "pionus.codex.selectAgentProfile" },
+  { label: "Reset Agent Profile", command: "pionus.codex.resetAgentProfile" },
+  { label: "Copy IDE Context Snapshot", command: "pionus.codex.copyContextSnapshot" },
+  { label: "Select Skills", command: "pionus.codex.selectSkills" },
+  { label: "Clear Skills", command: "pionus.codex.clearSkills" },
+  { label: "Run CLI Exec", command: "pionus.codex.runCliExec" },
+  { label: "Run CLI Review", command: "pionus.codex.runCliReview" },
+  { label: "Open Debug Logs", command: "pionus.codex.openDebugLogs" },
+  { label: "Set API Key", command: "pionus.codex.setApiKey" },
+  { label: "Clear API Key", command: "pionus.codex.clearApiKey" },
+  { label: "Open Settings", command: "pionus.codex.openSettings" }
+];
+
 // src/extension.ts
 function activate(context) {
   const outputChannel = vscode7.window.createOutputChannel(EXTENSION_DISPLAY_NAME, { log: true });
@@ -17018,44 +17108,13 @@ function activate(context) {
     vscode7.commands.registerCommand("pionus.codex.showStatus", () => provider.showStatus()),
     vscode7.commands.registerCommand("pionus.codex.showLastUsage", () => usageStatusBar.showLastUsage()),
     vscode7.commands.registerCommand("pionus.codex.manage", async () => {
-      const action = await vscode7.window.showQuickPick([
-        "Show Status",
-        "View Last Usage",
-        "Select Agent Profile",
-        "Reset Agent Profile",
-        "Copy IDE Context Snapshot",
-        "Select Skills",
-        "Clear Skills",
-        "Run CLI Exec",
-        "Run CLI Review",
-        "Open Debug Logs",
-        "Set API Key",
-        "Clear API Key",
-        "Open Settings"
-      ], { title: EXTENSION_DISPLAY_NAME });
+      const action = await vscode7.window.showQuickPick(MANAGEMENT_ACTIONS, { title: EXTENSION_DISPLAY_NAME });
       if (!action) {
         return;
       }
-      const commandMap = {
-        "Show Status": "pionus.codex.showStatus",
-        "View Last Usage": "pionus.codex.showLastUsage",
-        "Select Agent Profile": "pionus.codex.selectAgentProfile",
-        "Reset Agent Profile": "pionus.codex.resetAgentProfile",
-        "Copy IDE Context Snapshot": "pionus.codex.copyContextSnapshot",
-        "Select Skills": "pionus.codex.selectSkills",
-        "Clear Skills": "pionus.codex.clearSkills",
-        "Run CLI Exec": "pionus.codex.runCliExec",
-        "Run CLI Review": "pionus.codex.runCliReview",
-        "Open Debug Logs": "pionus.codex.openDebugLogs",
-        "Set API Key": "pionus.codex.setApiKey",
-        "Clear API Key": "pionus.codex.clearApiKey",
-        "Open Settings": "pionus.codex.openSettings"
-      };
-      await vscode7.commands.executeCommand(commandMap[action]);
+      await vscode7.commands.executeCommand(action.command);
     })
   );
-}
-function deactivate() {
 }
 async function selectAgentProfile(outputChannel) {
   const profiles = await loadAgentProfiles(getProviderConfig(), outputChannel);
@@ -17177,7 +17236,6 @@ function launchTerminal(name, command, cwd) {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
-  activate,
-  deactivate
+  activate
 });
 //# sourceMappingURL=extension.js.map
