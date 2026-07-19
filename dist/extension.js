@@ -14556,58 +14556,113 @@ function toAbortSignal2(token) {
 }
 
 // src/secrets.ts
+var import_node_crypto = require("node:crypto");
 var import_promises = require("node:fs/promises");
 var import_node_os = require("node:os");
 var import_node_path = require("node:path");
-var API_KEY_SECRET = "pionus.codex.apiKey";
-var DEFAULT_USER_AGENT = "pionus.openai-language-model-provider/0.0.1 VSCode-Extension";
-async function getApiCredentials(context) {
-  const config = getProviderConfig();
-  if (config.credentialsSource === "secretStorage") {
-    return readSecretStorageCredentials(context);
-  }
-  if (config.credentialsSource === "codexAuth") {
-    return readCodexAuthCredentials();
-  }
-  return await readCodexAuthCredentials() ?? await readSecretStorageCredentials(context);
-}
-async function setApiKey(context, apiKey) {
-  await context.secrets.store(API_KEY_SECRET, apiKey);
-}
-async function clearApiKey(context) {
-  await context.secrets.delete(API_KEY_SECRET);
-}
-async function readCodexAuthCredentials() {
+var LEGACY_API_KEY_SECRET = "pionus.codex.apiKey";
+var CHATGPT_API_KEY_SECRET = "pionus.credentials.chatgpt";
+var OPENAI_API_KEY_SECRET = "pionus.credentials.openai";
+var CUSTOM_API_KEY_PREFIX = "pionus.credentials.endpoint.";
+var DEFAULT_USER_AGENT = "pionus.openai-language-model-provider/0.0.2 VSCode-Extension";
+function classifyCredentialTarget(baseURL) {
+  const normalized = normalizeBaseURL(baseURL);
+  let url;
   try {
-    const raw = await (0, import_promises.readFile)((0, import_node_path.join)((0, import_node_os.homedir)(), ".codex", "auth.json"), "utf8");
-    const auth = JSON.parse(raw);
-    if (typeof auth.tokens?.access_token === "string" && auth.tokens.access_token.trim()) {
-      const headers = { "User-Agent": DEFAULT_USER_AGENT };
-      if (typeof auth.tokens.account_id === "string" && auth.tokens.account_id.trim()) {
-        headers["ChatGPT-Account-ID"] = auth.tokens.account_id.trim();
-      }
-      return {
-        apiKey: auth.tokens.access_token.trim(),
-        headers,
-        source: "codexAuth",
-        omitMaxOutputTokens: true
-      };
-    }
-    if (typeof auth.OPENAI_API_KEY === "string" && auth.OPENAI_API_KEY.trim()) {
-      return {
-        apiKey: auth.OPENAI_API_KEY.trim(),
-        headers: { "User-Agent": DEFAULT_USER_AGENT },
-        source: "codexAuth",
-        omitMaxOutputTokens: false
-      };
-    }
+    url = new URL(normalized);
   } catch {
-    return void 0;
+    throw new Error(`Invalid OpenAI endpoint URL: ${baseURL}`);
+  }
+  if (url.protocol !== "https:") {
+    throw new Error(`OpenAI credential endpoints must use HTTPS: ${url.href}`);
+  }
+  if (url.username || url.password) {
+    throw new Error("OpenAI credential endpoints must not contain embedded user information.");
+  }
+  const standardPort = url.port === "" || url.port === "443";
+  if (standardPort && url.hostname === "chatgpt.com" && url.pathname === "/backend-api/codex") {
+    return { kind: "chatgpt", baseURL: normalized, label: "ChatGPT Codex" };
+  }
+  if (standardPort && url.hostname === "api.openai.com" && url.pathname === "/v1") {
+    return { kind: "openai", baseURL: normalized, label: "OpenAI API" };
+  }
+  return { kind: "custom", baseURL: normalized, label: url.host };
+}
+function getCredentialSecretKey(target) {
+  if (target.kind === "chatgpt") {
+    return CHATGPT_API_KEY_SECRET;
+  }
+  if (target.kind === "openai") {
+    return OPENAI_API_KEY_SECRET;
+  }
+  return `${CUSTOM_API_KEY_PREFIX}${(0, import_node_crypto.createHash)("sha256").update(target.baseURL).digest("hex")}`;
+}
+async function getApiCredentials(context, baseURL, credentialsSource) {
+  const target = classifyCredentialTarget(baseURL);
+  if (credentialsSource === "secretStorage") {
+    return readSecretStorageCredentials(context, target);
+  }
+  if (credentialsSource === "codexAuth") {
+    return readCodexAuthCredentials(target);
+  }
+  return await readCodexAuthCredentials(target) ?? await readSecretStorageCredentials(context, target);
+}
+async function setApiKey(context, baseURL, apiKey) {
+  const target = classifyCredentialTarget(baseURL);
+  await context.secrets.store(getCredentialSecretKey(target), apiKey);
+  return target;
+}
+async function clearApiKey(context, baseURL) {
+  const target = classifyCredentialTarget(baseURL);
+  await context.secrets.delete(getCredentialSecretKey(target));
+  if (target.kind !== "custom") {
+    await context.secrets.delete(LEGACY_API_KEY_SECRET);
+  }
+  return target;
+}
+function selectCodexAuthCredentials(auth, target) {
+  if (target.kind === "chatgpt" && typeof auth.tokens?.access_token === "string" && auth.tokens.access_token.trim()) {
+    const headers = { "User-Agent": DEFAULT_USER_AGENT };
+    if (typeof auth.tokens.account_id === "string" && auth.tokens.account_id.trim()) {
+      headers["ChatGPT-Account-ID"] = auth.tokens.account_id.trim();
+    }
+    return {
+      apiKey: auth.tokens.access_token.trim(),
+      headers,
+      source: "codexAuth",
+      omitMaxOutputTokens: true
+    };
+  }
+  if (target.kind === "openai" && typeof auth.OPENAI_API_KEY === "string" && auth.OPENAI_API_KEY.trim()) {
+    return {
+      apiKey: auth.OPENAI_API_KEY.trim(),
+      headers: { "User-Agent": DEFAULT_USER_AGENT },
+      source: "codexAuth",
+      omitMaxOutputTokens: false
+    };
   }
   return void 0;
 }
-async function readSecretStorageCredentials(context) {
-  const stored = await context.secrets.get(API_KEY_SECRET);
+async function readCodexAuthCredentials(target) {
+  if (target.kind === "custom") {
+    return void 0;
+  }
+  try {
+    const raw = await (0, import_promises.readFile)((0, import_node_path.join)((0, import_node_os.homedir)(), ".codex", "auth.json"), "utf8");
+    return selectCodexAuthCredentials(JSON.parse(raw), target);
+  } catch {
+    return void 0;
+  }
+}
+async function readSecretStorageCredentials(context, target) {
+  const targetKey = getCredentialSecretKey(target);
+  let stored = await context.secrets.get(targetKey);
+  if (!stored?.trim() && target.kind !== "custom") {
+    stored = await context.secrets.get(LEGACY_API_KEY_SECRET);
+    if (stored?.trim()) {
+      await context.secrets.store(targetKey, stored.trim());
+    }
+  }
   if (!stored?.trim()) {
     return void 0;
   }
@@ -14987,7 +15042,7 @@ var CodexModelProvider = class {
   cachedModels;
   async provideLanguageModelChatInformation(options, token) {
     const config = getProviderConfig();
-    const credentials = await getApiCredentials(this.context);
+    const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
     this.outputChannel.debug("provideLanguageModelChatInformation start", {
       silent: options.silent,
       baseURL: normalizeBaseURL(config.baseURL),
@@ -15004,7 +15059,7 @@ var CodexModelProvider = class {
   }
   async provideLanguageModelChatResponse(model, messages, options, progress, token) {
     const config = getProviderConfig();
-    const credentials = await getApiCredentials(this.context);
+    const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
     if (!credentials) {
       throw new Error('Codex credentials are missing. Run "Pionus Codex: Set API Key" or configure ~/.codex/auth.json.');
     }
@@ -15146,7 +15201,7 @@ var CodexModelProvider = class {
   }
   async provideTokenCount(model, text, token) {
     const config = getProviderConfig();
-    const credentials = await getApiCredentials(this.context);
+    const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
     if (!credentials || !supportsOfficialTokenCounting(config.baseURL)) {
       return estimateTokenCount(text);
     }
@@ -15167,7 +15222,7 @@ var CodexModelProvider = class {
   }
   async showStatus() {
     const config = getProviderConfig();
-    const credentials = await getApiCredentials(this.context);
+    const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
     const agentProfile = await resolveAgentProfile(config, { hasTools: false, outputChannel: this.outputChannel });
     await vscode5.window.showInformationMessage([
       `Pionus Codex: ${credentials ? `credentials from ${credentials.source}` : "credentials missing"}`,
@@ -15386,15 +15441,28 @@ function activate(context) {
     vscode7.commands.registerCommand("pionus.codex.openDebugLogs", () => outputChannel.show(true)),
     vscode7.commands.registerCommand("pionus.codex.openSettings", () => vscode7.commands.executeCommand("workbench.action.openSettings", getConfigurationSection())),
     vscode7.commands.registerCommand("pionus.codex.setApiKey", async () => {
-      const apiKey = await vscode7.window.showInputBox({ title: "Set Codex API Key", prompt: "Enter your API key", password: true, ignoreFocusOut: true });
+      const config = getProviderConfig();
+      const target = classifyCredentialTarget(config.baseURL);
+      if (target.kind === "custom") {
+        const confirmation = await vscode7.window.showWarningMessage(
+          `Store a separate API key for custom endpoint ${target.baseURL}? Codex and OpenAI credentials will never be sent to this endpoint.`,
+          { modal: true },
+          "Store API Key"
+        );
+        if (confirmation !== "Store API Key") {
+          return;
+        }
+      }
+      const apiKey = await vscode7.window.showInputBox({ title: `Set ${target.label} API Key`, prompt: `Enter the API key for ${target.baseURL}`, password: true, ignoreFocusOut: true });
       if (apiKey?.trim()) {
-        await setApiKey(context, apiKey.trim());
-        await vscode7.window.showInformationMessage("Pionus Codex API key saved.");
+        await setApiKey(context, config.baseURL, apiKey.trim());
+        await vscode7.window.showInformationMessage(`${target.label} API key saved.`);
       }
     }),
     vscode7.commands.registerCommand("pionus.codex.clearApiKey", async () => {
-      await clearApiKey(context);
-      await vscode7.window.showInformationMessage("Pionus Codex API key cleared.");
+      const config = getProviderConfig();
+      const target = await clearApiKey(context, config.baseURL);
+      await vscode7.window.showInformationMessage(`${target.label} API key cleared.`);
     }),
     vscode7.commands.registerCommand("pionus.codex.selectAgentProfile", async () => selectAgentProfile(outputChannel)),
     vscode7.commands.registerCommand("pionus.codex.resetAgentProfile", () => setActiveAgentProfile(null)),
@@ -15515,7 +15583,7 @@ ${formatContextSnapshot(collectContextSnapshot(config))}`,
     imagePaths: imageUris?.map((uri) => uri.fsPath),
     enableSearch
   });
-  launchTerminal("Pionus Codex Exec", command.executable, toShellCommand(command), getPrimaryWorkspaceFolder());
+  launchTerminal("Pionus Codex Exec", toShellCommand(command), getPrimaryWorkspaceFolder());
 }
 async function runCliReview() {
   const enabled = await ensureCliBridgeEnabled();
@@ -15544,7 +15612,7 @@ async function runCliReview() {
   });
   const request = { mode: mode.requestMode, target, instructions };
   const command = buildReviewCliCommand(getProviderConfig(), request);
-  launchTerminal(`Pionus Codex Review: ${describeReviewRequest(request)}`, command.executable, toShellCommand(command), getPrimaryWorkspaceFolder());
+  launchTerminal(`Pionus Codex Review: ${describeReviewRequest(request)}`, toShellCommand(command), getPrimaryWorkspaceFolder());
 }
 async function ensureCliBridgeEnabled() {
   const config = getProviderConfig();
@@ -15561,10 +15629,10 @@ async function ensureCliBridgeEnabled() {
   }
   return false;
 }
-function launchTerminal(name, executable, command, cwd) {
+function launchTerminal(name, command, cwd) {
   const terminal = vscode7.window.createTerminal({ name, cwd, isTransient: false });
   terminal.show();
-  terminal.sendText(`command -v ${executable} >/dev/null 2>&1 && ${command} || printf 'Pionus Codex: command not found: %s\\n' ${JSON.stringify(executable)}`);
+  terminal.sendText(command);
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

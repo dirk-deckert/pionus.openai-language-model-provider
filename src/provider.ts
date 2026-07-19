@@ -77,7 +77,7 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
     token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelChatInformation[]> {
     const config = getProviderConfig();
-    const credentials = await getApiCredentials(this.context);
+    const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
     this.outputChannel.debug('provideLanguageModelChatInformation start', {
       silent: options.silent,
       baseURL: normalizeBaseURL(config.baseURL),
@@ -103,7 +103,7 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
     token: vscode.CancellationToken
   ): Promise<void> {
     const config = getProviderConfig();
-    const credentials = await getApiCredentials(this.context);
+    const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
     if (!credentials) {
       throw new Error('Codex credentials are missing. Run "Pionus Codex: Set API Key" or configure ~/.codex/auth.json.');
     }
@@ -254,7 +254,7 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
     token: vscode.CancellationToken
   ): Promise<number> {
     const config = getProviderConfig();
-    const credentials = await getApiCredentials(this.context);
+    const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
     if (!credentials || !supportsOfficialTokenCounting(config.baseURL)) {
       return estimateTokenCount(text);
     }
@@ -277,7 +277,7 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
 
   async showStatus(): Promise<void> {
     const config = getProviderConfig();
-    const credentials = await getApiCredentials(this.context);
+    const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
     const agentProfile = await resolveAgentProfile(config, { hasTools: false, outputChannel: this.outputChannel });
     await vscode.window.showInformationMessage([
       `Pionus Codex: ${credentials ? `credentials from ${credentials.source}` : 'credentials missing'}`,
