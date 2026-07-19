@@ -1,6 +1,12 @@
 import * as vscode from 'vscode';
 import type { ProviderConfig, ReasoningEffort } from './config.js';
-import { findOpenAIModelCatalogEntry, type OpenAIModelCatalogEntry } from './modelCatalog.js';
+import {
+  findModelDefinition,
+  findOpenAIModelCatalogEntry,
+  getCompatibilityFallbackDefinitions,
+  type ModelDefinition,
+  type OpenAIModelCatalogEntry
+} from './modelCatalog.js';
 import type { ApiCredentials } from './secrets.js';
 import { normalizeBaseURL } from './urlUtils.js';
 
@@ -8,17 +14,6 @@ const PROVIDER_MODEL_ID_PREFIX = 'codex::';
 const REASONING_ID_DELIMITER = '::reasoning=';
 const FAST_ID_SUFFIX = '::tier=fast';
 const DEFAULT_INPUT_LIMIT = 272_000;
-
-const MODEL_DEFAULT_REASONING: Partial<Record<string, ReasoningEffort>> = {
-  'gpt-5.6-sol': 'low',
-  'gpt-5.6-terra': 'medium',
-  'gpt-5.6-luna': 'medium',
-  'gpt-5.5': 'medium',
-  'gpt-5.4': 'medium',
-  'gpt-5.4-mini': 'medium',
-  'gpt-5.3-codex-spark-preview': 'high',
-  'codex-auto-review': 'medium'
-};
 
 const REASONING_LABELS: Record<ReasoningEffort, string> = {
   none: 'None',
@@ -30,15 +25,6 @@ const REASONING_LABELS: Record<ReasoningEffort, string> = {
   max: 'Max',
   ultra: 'Ultra'
 };
-
-const FALLBACK_MODELS = [
-  { requestModel: 'gpt-5.6-sol', maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
-  { requestModel: 'gpt-5.6-terra', maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
-  { requestModel: 'gpt-5.6-luna', maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
-  { requestModel: 'gpt-5.5', maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
-  { requestModel: 'gpt-5.4', maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
-  { requestModel: 'gpt-5.4-mini', maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true }
-] as const;
 
 export type ModelDiscoveryTarget = 'chatgpt' | 'openai' | 'custom';
 
@@ -168,17 +154,14 @@ export function buildFallbackModels(
     return metadata?.streaming ? buildModelVariants(config, metadata) : [];
   }
 
-  const pinnedModels = FALLBACK_MODELS.flatMap((model) => buildModelVariants(config, buildFallbackMetadata(config, model)));
-  if (FALLBACK_MODELS.some((model) => model.requestModel === config.model)) {
+  const fallbackDefinitions = getCompatibilityFallbackDefinitions();
+  const pinnedModels = fallbackDefinitions.flatMap((definition) => buildModelVariants(config, buildFallbackMetadata(config, definition)));
+  if (fallbackDefinitions.some((definition) => definition.id === config.model)) {
     return pinnedModels;
   }
 
   return [
-    ...buildModelVariants(config, buildFallbackMetadata(config, {
-      requestModel: config.model,
-      maxInputTokens: DEFAULT_INPUT_LIMIT,
-      imageInput: false
-    })),
+    ...buildModelVariants(config, buildFallbackMetadata(config, config.model)),
     ...pinnedModels
   ];
 }
@@ -206,12 +189,7 @@ export function resolveModelMetadata(
     return entry ? buildOpenAIMetadata(requestModel, entry) : undefined;
   }
 
-  const fallback = FALLBACK_MODELS.find((model) => model.requestModel === requestModel);
-  return buildFallbackMetadata(config, fallback ?? {
-    requestModel,
-    maxInputTokens: DEFAULT_INPUT_LIMIT,
-    imageInput: false
-  });
+  return buildFallbackMetadata(config, findModelDefinition(requestModel) ?? requestModel);
 }
 
 export function parseModelIdentifier(modelId: string): ParsedModelIdentifier {
@@ -249,8 +227,9 @@ function resolveDiscoveredModelMetadata(
     return catalogEntry?.streaming ? buildOpenAIMetadata(requestModel, catalogEntry) : undefined;
   }
 
-  const defaultReasoningEffort = normalizeReasoningEffort(model.default_reasoning_level) ?? MODEL_DEFAULT_REASONING[requestModel];
-  const reasoningOptions = getReasoningOptions(model, requestModel, defaultReasoningEffort);
+  const fallbackReasoningEffort = findModelDefinition(requestModel)?.fallback?.defaultReasoningEffort;
+  const defaultReasoningEffort = normalizeReasoningEffort(model.default_reasoning_level) ?? fallbackReasoningEffort;
+  const reasoningOptions = getReasoningOptions(model, defaultReasoningEffort);
   const maxOutputTokens = getPositiveInteger(model.max_output_tokens) ?? config.maxOutputTokens;
   const advertisedContext = getPositiveInteger(model.context_window);
   const maxInputTokens = advertisedContext ?? DEFAULT_INPUT_LIMIT;
@@ -300,17 +279,19 @@ function buildOpenAIMetadata(requestModel: string, entry: OpenAIModelCatalogEntr
 
 function buildFallbackMetadata(
   config: ModelLimitConfig,
-  model: { requestModel: string; maxInputTokens: number; imageInput: boolean }
+  model: ModelDefinition | string
 ): ProviderModelMetadata {
-  const defaultReasoningEffort = MODEL_DEFAULT_REASONING[model.requestModel];
+  const requestModel = typeof model === 'string' ? model : model.id;
+  const fallback = typeof model === 'string' ? undefined : model.fallback;
+  const defaultReasoningEffort = fallback?.defaultReasoningEffort;
   return {
-    requestModel: model.requestModel,
-    name: formatDisplayName(model.requestModel),
+    requestModel,
+    name: formatDisplayName(requestModel),
     tooltip: 'Conservative fallback model used when discovery metadata is unavailable.',
     version: '1.0.0',
-    maxInputTokens: model.maxInputTokens,
+    maxInputTokens: fallback?.maxInputTokens ?? DEFAULT_INPUT_LIMIT,
     maxOutputTokens: config.maxOutputTokens,
-    imageInput: model.imageInput,
+    imageInput: fallback?.imageInput ?? false,
     toolCalling: true,
     streaming: true,
     fastTierAvailability: 'unknown',
@@ -389,7 +370,7 @@ function buildThinkingEffortSchema(reasoningOptions: ReasoningOption[], defaultE
   };
 }
 
-function getReasoningOptions(model: UpstreamModel, modelId: string, defaultReasoningEffort: ReasoningEffort | undefined): ReasoningOption[] {
+function getReasoningOptions(model: UpstreamModel, defaultReasoningEffort: ReasoningEffort | undefined): ReasoningOption[] {
   const options: ReasoningOption[] = [];
   if (defaultReasoningEffort) {
     options.push(toReasoningOption(defaultReasoningEffort));
@@ -416,9 +397,6 @@ function getReasoningOptions(model: UpstreamModel, modelId: string, defaultReaso
     }
   }
 
-  if (options.length === 0 && MODEL_DEFAULT_REASONING[modelId]) {
-    options.push(toReasoningOption(MODEL_DEFAULT_REASONING[modelId]));
-  }
   return options;
 }
 

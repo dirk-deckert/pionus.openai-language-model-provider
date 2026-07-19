@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
+  buildExtensionUserAgent,
   classifyCredentialTarget,
   getApiCredentials,
   getCredentialSecretKey,
@@ -24,6 +25,11 @@ test('binds Codex auth credentials to their official endpoints', () => {
   assert.equal(selectCodexAuthCredentials(auth, classifyCredentialTarget('https://chatgpt.com:444/backend-api/codex')), undefined);
 });
 
+test('builds the HTTP user-agent from the extension manifest version', () => {
+  assert.equal(buildExtensionUserAgent('0.1.3'), 'pionus.openai-language-model-provider/0.1.3 VSCode-Extension');
+  assert.equal(buildExtensionUserAgent(undefined), 'pionus.openai-language-model-provider/unknown VSCode-Extension');
+});
+
 test('rejects insecure credential endpoints and isolates custom endpoint secrets', () => {
   assert.throws(() => classifyCredentialTarget('http://chatgpt.com/backend-api/codex/responses'), /HTTPS/);
   assert.throws(() => classifyCredentialTarget('https://user:password@chatgpt.com/backend-api/codex/responses'), /embedded user/);
@@ -36,6 +42,7 @@ test('rejects insecure credential endpoints and isolates custom endpoint secrets
 test('custom endpoints cannot fall back to a legacy official credential', async () => {
   const reads: string[] = [];
   const context = {
+    extension: { packageJSON: { version: '0.1.3' } },
     secrets: {
       get: async (key: string) => {
         reads.push(key);

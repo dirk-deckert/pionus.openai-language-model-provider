@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.3
+
+- Attempt exact input-token counting for ChatGPT Codex, with a ten-minute
+  capability cache and conservative fallback when the endpoint is unavailable.
+- Consolidate official and fallback model metadata into one registry while
+  preserving every existing model identifier, capability, and picker order.
+- Derive the HTTP user-agent from the extension manifest version and remove
+  redundant management-command and lifecycle mappings.
+- Document the intentional stateless request and guarded reasoning boundaries.
+
 ## 0.1.2
 
 - Use the full Pionus OpenAI Language Model Provider name consistently across

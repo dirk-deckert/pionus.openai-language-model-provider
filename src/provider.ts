@@ -21,6 +21,7 @@ import { buildInstructions } from './instructions.js';
 import { resolveAgentProfile } from './agentProfiles.js';
 import { collectContextSnapshot, formatContextSnapshot } from './contextCollector.js';
 import { buildActiveSkillInstructions } from './skills.js';
+import { InputTokenEndpointSupportCache } from './tokenCountPolicy.js';
 
 type VSCodeWithThinkingPart = typeof vscode & {
   LanguageModelThinkingPart?: new (value: string | string[], id?: string, metadata?: Record<string, unknown>) => unknown;
@@ -59,6 +60,7 @@ interface StreamLogState {
 export class CodexModelProvider implements vscode.LanguageModelChatProvider {
   readonly onDidChangeLanguageModelChatInformation: vscode.Event<void>;
   private readonly modelInfoChangedEmitter = new vscode.EventEmitter<void>();
+  private readonly inputTokenEndpointSupport = new InputTokenEndpointSupportCache();
   private cachedModels?: { key: string; target: ModelDiscoveryTarget; expiresAt: number; models: ResolvedProviderModel[] };
 
   constructor(
@@ -341,12 +343,12 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
     const fallbackTokenCount = estimateConvertedTokenCount(text, input);
     const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
     throwIfCancellationRequested(token);
-    if (!credentials || target === 'chatgpt') {
+    if (!credentials || !this.inputTokenEndpointSupport.canAttempt(config.baseURL)) {
       return fallbackTokenCount;
     }
 
     try {
-      return await countInputTokens({
+      const exactTokenCount = await countInputTokens({
         baseURL: config.baseURL,
         apiKey: credentials.apiKey,
         headers: credentials.headers,
@@ -354,8 +356,11 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
         input,
         token
       });
+      this.inputTokenEndpointSupport.markSupported(config.baseURL);
+      return exactTokenCount;
     } catch (error) {
       throwIfCancellationRequested(token);
+      this.inputTokenEndpointSupport.recordFailure(config.baseURL, error);
       this.outputChannel.debug('Exact Responses input-token count unavailable; using local estimate', {
         model: parsedModel.requestModel,
         target,

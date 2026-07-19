@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { MANAGEMENT_ACTIONS } from '../src/managementActions.js';
 
 const EXISTING_COMMANDS = [
   ['pionus.codex.manage', 'Pionus OpenAI Language Model Provider: Manage'],
@@ -62,14 +63,14 @@ interface ManifestSetting {
   scope?: string;
 }
 
-test('manifest preserves stable IDs while using coherent 0.1.2 display names', async () => {
+test('manifest preserves stable IDs in the 0.1.3 release', async () => {
   const manifest = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')) as Record<string, any>;
 
   assert.equal(`${manifest.publisher}.${manifest.name}`, 'pionus.openai-language-model-provider');
   assert.equal(manifest.name, 'openai-language-model-provider');
   assert.equal(manifest.displayName, 'Pionus OpenAI Language Model Provider');
   assert.equal(manifest.publisher, 'pionus');
-  assert.equal(manifest.version, '0.1.2');
+  assert.equal(manifest.version, '0.1.3');
   assert.equal(manifest.main, './dist/extension.js');
   assert.equal(manifest.engines.vscode, '^1.104.0');
 
@@ -100,4 +101,14 @@ test('manifest preserves stable IDs while using coherent 0.1.2 display names', a
     Object.fromEntries(Object.entries(properties).map(([setting, schema]) => [setting, schema.scope])),
     EXISTING_SETTING_SCOPES
   );
+});
+
+test('management menu dispatches every contributed utility command exactly once', () => {
+  const expected = EXISTING_COMMANDS
+    .map(([command]) => command)
+    .filter((command) => command !== 'pionus.codex.manage')
+    .sort();
+  const actual = MANAGEMENT_ACTIONS.map((action) => action.command).sort();
+  assert.deepEqual(actual, expected);
+  assert.equal(new Set(MANAGEMENT_ACTIONS.map((action) => action.label)).size, MANAGEMENT_ACTIONS.length);
 });

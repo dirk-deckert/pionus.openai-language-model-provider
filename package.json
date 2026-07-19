@@ -2,7 +2,7 @@
   "name": "openai-language-model-provider",
   "displayName": "Pionus OpenAI Language Model Provider",
   "description": "Pionus OpenAI Language Model Provider exposes OpenAI models through the VS Code Language Model API.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "pionus",
   "license": "MIT",
   "icon": "assets/icon.png",
