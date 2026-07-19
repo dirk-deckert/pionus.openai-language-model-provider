@@ -1,5 +1,14 @@
 import type { ResponseUsage } from 'openai/resources/responses/responses';
 import * as vscode from 'vscode';
+import {
+  calculateUsageCostUsd,
+  formatUsageTokens,
+  formatUsd,
+  getUsageBreakdown,
+  validateModelPricingUsdPerMTok,
+  type PricingDiagnostic,
+  type PricingTableUsdPerMTok
+} from './usage.js';
 
 export interface UsageEvent {
   model: string;
@@ -7,21 +16,47 @@ export interface UsageEvent {
   completedAt: number;
 }
 
+export interface UsageStatusConfiguration {
+  showInStatusBar: boolean;
+  modelPricingUsdPerMTok: Record<string, unknown>;
+}
+
 export class UsageStatusBar implements vscode.Disposable {
   private readonly statusBar: vscode.StatusBarItem;
   private lastUsage?: UsageEvent;
+  private showInStatusBar = true;
+  private pricing: PricingTableUsdPerMTok = {};
 
-  constructor(private readonly context: vscode.ExtensionContext) {
+  constructor(
+    context: vscode.ExtensionContext,
+    configuration?: Partial<UsageStatusConfiguration>,
+    private readonly reportDiagnostic?: (diagnostic: PricingDiagnostic) => void
+  ) {
     this.statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 88);
     this.statusBar.command = 'pionus.codex.showLastUsage';
     context.subscriptions.push(this.statusBar);
+    if (configuration) {
+      this.updateConfiguration({
+        showInStatusBar: configuration.showInStatusBar ?? true,
+        modelPricingUsdPerMTok: configuration.modelPricingUsdPerMTok ?? {}
+      });
+    }
   }
 
   record(event: UsageEvent): void {
     this.lastUsage = event;
-    this.statusBar.text = `Codex ${event.usage.total_tokens ?? 0} tokens`;
-    this.statusBar.tooltip = `Pionus Codex usage for ${event.model}`;
-    this.statusBar.show();
+    this.render();
+  }
+
+  updateConfiguration(configuration: UsageStatusConfiguration): readonly PricingDiagnostic[] {
+    this.showInStatusBar = configuration.showInStatusBar;
+    const validated = validateModelPricingUsdPerMTok(configuration.modelPricingUsdPerMTok);
+    this.pricing = validated.pricing;
+    for (const diagnostic of validated.diagnostics) {
+      this.reportDiagnostic?.(diagnostic);
+    }
+    this.render();
+    return validated.diagnostics;
   }
 
   async showLastUsage(): Promise<void> {
@@ -29,11 +64,27 @@ export class UsageStatusBar implements vscode.Disposable {
       await vscode.window.showInformationMessage('No Codex usage recorded yet.');
       return;
     }
-    const usage = this.lastUsage.usage;
-    await vscode.window.showInformationMessage(`Codex usage: input ${usage.input_tokens ?? 0}, output ${usage.output_tokens ?? 0}, total ${usage.total_tokens ?? 0}.`);
+    const cost = calculateUsageCostUsd(this.lastUsage.model, this.lastUsage.usage, this.pricing);
+    const costText = cost ? ` Estimated cost: ${formatUsd(cost.total)}.` : '';
+    await vscode.window.showInformationMessage(`Codex usage: ${formatUsageTokens(this.lastUsage.usage)}.${costText}`);
   }
 
   dispose(): void {
     this.statusBar.dispose();
+  }
+
+  private render(): void {
+    if (!this.lastUsage || !this.showInStatusBar) {
+      this.statusBar.hide();
+      return;
+    }
+
+    const tokens = getUsageBreakdown(this.lastUsage.usage);
+    const cost = calculateUsageCostUsd(this.lastUsage.model, this.lastUsage.usage, this.pricing);
+    this.statusBar.text = `Codex ${tokens.totalTokens} tokens`;
+    this.statusBar.tooltip = cost
+      ? `Pionus Codex usage for ${this.lastUsage.model}\n${formatUsageTokens(this.lastUsage.usage)}\nEstimated cost: ${formatUsd(cost.total)}`
+      : `Pionus Codex usage for ${this.lastUsage.model}`;
+    this.statusBar.show();
   }
 }

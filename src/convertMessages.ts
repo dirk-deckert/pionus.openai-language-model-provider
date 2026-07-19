@@ -1,4 +1,4 @@
-import type { ResponseInputItem } from 'openai/resources/responses/responses';
+import type { ResponseInputImage, ResponseInputItem, ResponseInputText } from 'openai/resources/responses/responses';
 import type * as vscode from 'vscode';
 
 export type ResponsesInputMessage = ResponseInputItem;
@@ -6,6 +6,13 @@ export type ResponsesInputMessage = ResponseInputItem;
 const textDecoder = new TextDecoder();
 const USAGE_DATA_PART_MIME = 'usage';
 const LANGUAGE_MODEL_CHAT_MESSAGE_ROLE_USER = 1;
+const SUPPORTED_IMAGE_MIME_TYPES = new Map<string, string>([
+  ['image/png', 'image/png'],
+  ['image/jpeg', 'image/jpeg'],
+  ['image/jpg', 'image/jpeg'],
+  ['image/webp', 'image/webp'],
+  ['image/gif', 'image/gif']
+]);
 
 export function convertMessagesToResponsesInput(messages: readonly vscode.LanguageModelChatRequestMessage[], enableImageInput: boolean): ResponsesInputMessage[] {
   return messages.flatMap((message) => convertMessageToResponsesInput(message, enableImageInput));
@@ -15,7 +22,7 @@ export function estimateTokenCount(value: string | vscode.LanguageModelChatReque
   if (typeof value === 'string') {
     return Math.ceil(value.length / 4);
   }
-  const serialized = JSON.stringify(convertMessagesToResponsesInput([value], false));
+  const serialized = JSON.stringify(convertMessagesToResponsesInput([value], true));
   return serialized === '[]' ? 0 : Math.max(1, Math.ceil(serialized.length / 4));
 }
 
@@ -40,17 +47,19 @@ function convertMessageToResponsesInput(message: vscode.LanguageModelChatRequest
     }
 
     if (isDataPart(part)) {
-      if (enableImageInput && isImageMime(part.mimeType)) {
+      if (isImageMime(part.mimeType)) {
+        const mimeType = normalizeImageMimeType(part.mimeType);
+        if (!mimeType) {
+          throw new Error(`Unsupported image MIME type "${part.mimeType}". Supported image types are PNG, JPEG, WebP, and GIF.`);
+        }
+        if (!enableImageInput) {
+          throw new Error('Image input is not enabled for the selected model.');
+        }
         flushText();
         items.push({
           role,
           type: 'message',
-          content: [
-            {
-              type: 'input_image',
-              image_url: `data:${part.mimeType};base64,${Buffer.from(part.data).toString('base64')}`
-            }
-          ]
+          content: [createImageInput(part, mimeType)]
         } as unknown as ResponsesInputMessage);
       } else {
         const serialized = serializeDataPart(part);
@@ -77,7 +86,7 @@ function convertMessageToResponsesInput(message: vscode.LanguageModelChatRequest
       items.push({
         type: 'function_call_output',
         call_id: part.callId,
-        output: serializeToolResultContent(part.content)
+        output: serializeToolResultContent(part.content, enableImageInput)
       } as ResponsesInputMessage);
     }
   }
@@ -86,16 +95,53 @@ function convertMessageToResponsesInput(message: vscode.LanguageModelChatRequest
   return items;
 }
 
-function serializeToolResultContent(content: readonly unknown[]): string {
-  return content.map((part) => {
+function serializeToolResultContent(content: readonly unknown[], enableImageInput: boolean): string | Array<ResponseInputText | ResponseInputImage> {
+  const output: Array<ResponseInputText | ResponseInputImage> = [];
+  let containsImage = false;
+  const textValues: string[] = [];
+
+  for (const part of content) {
     if (isTextPart(part)) {
-      return part.value;
+      textValues.push(part.value);
+      output.push({ type: 'input_text', text: part.value });
+      continue;
     }
     if (isDataPart(part)) {
-      return serializeDataPart(part);
+      if (isImageMime(part.mimeType)) {
+        const mimeType = normalizeImageMimeType(part.mimeType);
+        if (!mimeType) {
+          throw new Error(`Unsupported image MIME type "${part.mimeType}". Supported image types are PNG, JPEG, WebP, and GIF.`);
+        }
+        if (!enableImageInput) {
+          throw new Error('Image input is not enabled for the selected model.');
+        }
+        containsImage = true;
+        output.push(createImageInput(part, mimeType));
+        continue;
+      }
+      const serialized = serializeDataPart(part);
+      if (serialized) {
+        textValues.push(serialized);
+        output.push({ type: 'input_text', text: serialized });
+      }
+      continue;
     }
-    return safeJsonStringify(part);
-  }).filter(Boolean).join('\n\n');
+    const serialized = safeJsonStringify(part);
+    if (serialized) {
+      textValues.push(serialized);
+      output.push({ type: 'input_text', text: serialized });
+    }
+  }
+
+  return containsImage ? output : textValues.join('\n\n');
+}
+
+function createImageInput(part: vscode.LanguageModelDataPart, mimeType: string): ResponseInputImage {
+  return {
+    type: 'input_image',
+    detail: 'auto',
+    image_url: `data:${mimeType};base64,${Buffer.from(part.data).toString('base64')}`
+  };
 }
 
 function serializeDataPart(part: vscode.LanguageModelDataPart): string {
@@ -109,8 +155,12 @@ function serializeDataPart(part: vscode.LanguageModelDataPart): string {
   return `[binary data: ${part.mimeType}, ${part.data.byteLength} bytes]`;
 }
 
+export function normalizeImageMimeType(mimeType: string): string | undefined {
+  return SUPPORTED_IMAGE_MIME_TYPES.get(mimeType.trim().toLowerCase());
+}
+
 function isImageMime(mimeType: string): boolean {
-  return ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'].includes(mimeType.toLowerCase());
+  return mimeType.trim().toLowerCase().startsWith('image/');
 }
 
 function isTextPart(value: unknown): value is vscode.LanguageModelTextPart {

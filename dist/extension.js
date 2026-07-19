@@ -3790,6 +3790,13 @@ var vscode5 = __toESM(require("vscode"));
 var textDecoder = new TextDecoder();
 var USAGE_DATA_PART_MIME = "usage";
 var LANGUAGE_MODEL_CHAT_MESSAGE_ROLE_USER = 1;
+var SUPPORTED_IMAGE_MIME_TYPES = /* @__PURE__ */ new Map([
+  ["image/png", "image/png"],
+  ["image/jpeg", "image/jpeg"],
+  ["image/jpg", "image/jpeg"],
+  ["image/webp", "image/webp"],
+  ["image/gif", "image/gif"]
+]);
 function convertMessagesToResponsesInput(messages, enableImageInput) {
   return messages.flatMap((message) => convertMessageToResponsesInput(message, enableImageInput));
 }
@@ -3797,7 +3804,7 @@ function estimateTokenCount(value) {
   if (typeof value === "string") {
     return Math.ceil(value.length / 4);
   }
-  const serialized = JSON.stringify(convertMessagesToResponsesInput([value], false));
+  const serialized = JSON.stringify(convertMessagesToResponsesInput([value], true));
   return serialized === "[]" ? 0 : Math.max(1, Math.ceil(serialized.length / 4));
 }
 function convertMessageToResponsesInput(message, enableImageInput) {
@@ -3818,17 +3825,19 @@ function convertMessageToResponsesInput(message, enableImageInput) {
       continue;
     }
     if (isDataPart(part)) {
-      if (enableImageInput && isImageMime(part.mimeType)) {
+      if (isImageMime(part.mimeType)) {
+        const mimeType = normalizeImageMimeType(part.mimeType);
+        if (!mimeType) {
+          throw new Error(`Unsupported image MIME type "${part.mimeType}". Supported image types are PNG, JPEG, WebP, and GIF.`);
+        }
+        if (!enableImageInput) {
+          throw new Error("Image input is not enabled for the selected model.");
+        }
         flushText();
         items.push({
           role,
           type: "message",
-          content: [
-            {
-              type: "input_image",
-              image_url: `data:${part.mimeType};base64,${Buffer.from(part.data).toString("base64")}`
-            }
-          ]
+          content: [createImageInput(part, mimeType)]
         });
       } else {
         const serialized = serializeDataPart(part);
@@ -3853,23 +3862,57 @@ function convertMessageToResponsesInput(message, enableImageInput) {
       items.push({
         type: "function_call_output",
         call_id: part.callId,
-        output: serializeToolResultContent(part.content)
+        output: serializeToolResultContent(part.content, enableImageInput)
       });
     }
   }
   flushText();
   return items;
 }
-function serializeToolResultContent(content) {
-  return content.map((part) => {
+function serializeToolResultContent(content, enableImageInput) {
+  const output = [];
+  let containsImage = false;
+  const textValues = [];
+  for (const part of content) {
     if (isTextPart(part)) {
-      return part.value;
+      textValues.push(part.value);
+      output.push({ type: "input_text", text: part.value });
+      continue;
     }
     if (isDataPart(part)) {
-      return serializeDataPart(part);
+      if (isImageMime(part.mimeType)) {
+        const mimeType = normalizeImageMimeType(part.mimeType);
+        if (!mimeType) {
+          throw new Error(`Unsupported image MIME type "${part.mimeType}". Supported image types are PNG, JPEG, WebP, and GIF.`);
+        }
+        if (!enableImageInput) {
+          throw new Error("Image input is not enabled for the selected model.");
+        }
+        containsImage = true;
+        output.push(createImageInput(part, mimeType));
+        continue;
+      }
+      const serialized2 = serializeDataPart(part);
+      if (serialized2) {
+        textValues.push(serialized2);
+        output.push({ type: "input_text", text: serialized2 });
+      }
+      continue;
     }
-    return safeJsonStringify(part);
-  }).filter(Boolean).join("\n\n");
+    const serialized = safeJsonStringify(part);
+    if (serialized) {
+      textValues.push(serialized);
+      output.push({ type: "input_text", text: serialized });
+    }
+  }
+  return containsImage ? output : textValues.join("\n\n");
+}
+function createImageInput(part, mimeType) {
+  return {
+    type: "input_image",
+    detail: "auto",
+    image_url: `data:${mimeType};base64,${Buffer.from(part.data).toString("base64")}`
+  };
 }
 function serializeDataPart(part) {
   const mimeType = part.mimeType.toLowerCase();
@@ -3881,8 +3924,11 @@ function serializeDataPart(part) {
   }
   return `[binary data: ${part.mimeType}, ${part.data.byteLength} bytes]`;
 }
+function normalizeImageMimeType(mimeType) {
+  return SUPPORTED_IMAGE_MIME_TYPES.get(mimeType.trim().toLowerCase());
+}
 function isImageMime(mimeType) {
-  return ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"].includes(mimeType.toLowerCase());
+  return mimeType.trim().toLowerCase().startsWith("image/");
 }
 function isTextPart(value) {
   return hasObjectShape(value) && typeof value.value === "string";
@@ -3979,6 +4025,160 @@ function getEnum(config, key, allowed, fallback) {
   return allowed.includes(value) ? value : fallback;
 }
 
+// src/modelCatalog.ts
+var OPENAI_MODEL_CATALOG_REVIEWED_AT = "2026-07-19";
+var OPENAI_MODEL_GUIDANCE_URL = "https://developers.openai.com/api/docs/guides/latest-model";
+var OPENAI_MODEL_CATALOG = [
+  {
+    id: "gpt-5.6-sol",
+    aliases: ["gpt-5.6"],
+    name: "GPT-5.6 Sol",
+    description: "Frontier model for complex professional work.",
+    contextWindowTokens: 105e4,
+    maxOutputTokens: 128e3,
+    imageInput: true,
+    toolCalling: true,
+    streaming: true,
+    supportedReasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+    defaultReasoningEffort: "medium",
+    sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+    sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.6-sol", OPENAI_MODEL_GUIDANCE_URL],
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+  },
+  {
+    id: "gpt-5.6-terra",
+    aliases: [],
+    name: "GPT-5.6 Terra",
+    description: "GPT-5.6 model that balances intelligence and cost.",
+    contextWindowTokens: 105e4,
+    maxOutputTokens: 128e3,
+    imageInput: true,
+    toolCalling: true,
+    streaming: true,
+    supportedReasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+    defaultReasoningEffort: "medium",
+    sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+    sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.6-terra", OPENAI_MODEL_GUIDANCE_URL],
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+  },
+  {
+    id: "gpt-5.6-luna",
+    aliases: [],
+    name: "GPT-5.6 Luna",
+    description: "GPT-5.6 model optimized for cost-sensitive workloads.",
+    contextWindowTokens: 105e4,
+    maxOutputTokens: 128e3,
+    imageInput: true,
+    toolCalling: true,
+    streaming: true,
+    supportedReasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+    defaultReasoningEffort: "medium",
+    sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+    sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.6-luna", OPENAI_MODEL_GUIDANCE_URL],
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+  },
+  {
+    id: "gpt-5.5",
+    aliases: ["gpt-5.5-2026-04-23"],
+    name: "GPT-5.5",
+    description: "Frontier model for complex coding and professional work.",
+    contextWindowTokens: 105e4,
+    maxOutputTokens: 128e3,
+    imageInput: true,
+    toolCalling: true,
+    streaming: true,
+    supportedReasoningEfforts: ["none", "low", "medium", "high", "xhigh"],
+    defaultReasoningEffort: "medium",
+    sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.5",
+    sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.5"],
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+  },
+  {
+    id: "gpt-5.5-pro",
+    aliases: ["gpt-5.5-pro-2026-04-23"],
+    name: "GPT-5.5 Pro",
+    description: "Higher-compute GPT-5.5 model for difficult problems.",
+    contextWindowTokens: 105e4,
+    maxOutputTokens: 128e3,
+    imageInput: true,
+    toolCalling: true,
+    streaming: false,
+    supportedReasoningEfforts: ["medium", "high", "xhigh"],
+    defaultReasoningEffort: "high",
+    sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.5-pro",
+    sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.5-pro"],
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+  },
+  {
+    id: "gpt-5.4",
+    aliases: ["gpt-5.4-2026-03-05"],
+    name: "GPT-5.4",
+    description: "Model for coding and complex professional work.",
+    contextWindowTokens: 105e4,
+    maxOutputTokens: 128e3,
+    imageInput: true,
+    toolCalling: true,
+    streaming: true,
+    supportedReasoningEfforts: ["none", "low", "medium", "high", "xhigh"],
+    defaultReasoningEffort: "none",
+    sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.4",
+    sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.4"],
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+  },
+  {
+    id: "gpt-5.4-pro",
+    aliases: ["gpt-5.4-pro-2026-03-05"],
+    name: "GPT-5.4 Pro",
+    description: "Higher-compute GPT-5.4 model for difficult problems.",
+    contextWindowTokens: 105e4,
+    maxOutputTokens: 128e3,
+    imageInput: true,
+    toolCalling: true,
+    streaming: true,
+    supportedReasoningEfforts: ["medium", "high", "xhigh"],
+    defaultReasoningEffort: "medium",
+    sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.4-pro",
+    sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.4-pro"],
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+  },
+  {
+    id: "gpt-5.4-mini",
+    aliases: ["gpt-5.4-mini-2026-03-17"],
+    name: "GPT-5.4 Mini",
+    description: "Efficient model for coding, computer use, and subagents.",
+    contextWindowTokens: 4e5,
+    maxOutputTokens: 128e3,
+    imageInput: true,
+    toolCalling: true,
+    streaming: true,
+    supportedReasoningEfforts: ["none", "low", "medium", "high", "xhigh"],
+    defaultReasoningEffort: "none",
+    sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.4-mini",
+    sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.4-mini"],
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+  },
+  {
+    id: "gpt-5.4-nano",
+    aliases: ["gpt-5.4-nano-2026-03-17"],
+    name: "GPT-5.4 Nano",
+    description: "Low-cost GPT-5.4 model for simple high-volume tasks.",
+    contextWindowTokens: 4e5,
+    maxOutputTokens: 128e3,
+    imageInput: true,
+    toolCalling: true,
+    streaming: true,
+    supportedReasoningEfforts: ["none", "low", "medium", "high", "xhigh"],
+    defaultReasoningEffort: "none",
+    sourceURL: "https://developers.openai.com/api/docs/models/gpt-5.4-nano",
+    sourceURLs: ["https://developers.openai.com/api/docs/models/gpt-5.4-nano"],
+    reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
+  }
+];
+function findOpenAIModelCatalogEntry(modelId) {
+  const normalized = modelId.trim();
+  return OPENAI_MODEL_CATALOG.find((entry) => entry.id === normalized || entry.aliases.includes(normalized));
+}
+
 // src/urlUtils.ts
 function normalizeBaseURL(baseURL) {
   return baseURL.replace(/\/+((responses)|(chat\/completions)|(completions))\/?$/i, "").replace(/\/+$/, "");
@@ -3988,8 +4188,7 @@ function normalizeBaseURL(baseURL) {
 var PROVIDER_MODEL_ID_PREFIX = "codex::";
 var REASONING_ID_DELIMITER = "::reasoning=";
 var FAST_ID_SUFFIX = "::tier=fast";
-var DEFAULT_CONTEXT_WINDOW = 272e3;
-var LARGE_CONTEXT_WINDOW = 372e3;
+var DEFAULT_INPUT_LIMIT = 272e3;
 var MODEL_DEFAULT_REASONING = {
   "gpt-5.6-sol": "low",
   "gpt-5.6-terra": "medium",
@@ -4011,50 +4210,81 @@ var REASONING_LABELS = {
   ultra: "Ultra"
 };
 var FALLBACK_MODELS = [
-  { requestModel: "gpt-5.6-sol", maxInputTokens: LARGE_CONTEXT_WINDOW, imageInput: true },
-  { requestModel: "gpt-5.6-terra", maxInputTokens: LARGE_CONTEXT_WINDOW, imageInput: true },
-  { requestModel: "gpt-5.6-luna", maxInputTokens: LARGE_CONTEXT_WINDOW, imageInput: true },
-  { requestModel: "gpt-5.5", maxInputTokens: DEFAULT_CONTEXT_WINDOW, imageInput: true },
-  { requestModel: "gpt-5.4", maxInputTokens: DEFAULT_CONTEXT_WINDOW, imageInput: true },
-  { requestModel: "gpt-5.4-mini", maxInputTokens: DEFAULT_CONTEXT_WINDOW, imageInput: true }
+  { requestModel: "gpt-5.6-sol", maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
+  { requestModel: "gpt-5.6-terra", maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
+  { requestModel: "gpt-5.6-luna", maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
+  { requestModel: "gpt-5.5", maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
+  { requestModel: "gpt-5.4", maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true },
+  { requestModel: "gpt-5.4-mini", maxInputTokens: DEFAULT_INPUT_LIMIT, imageInput: true }
 ];
-async function fetchAvailableModels(config, credentials, token) {
+async function fetchAvailableModels(config, credentials, token, target = "chatgpt") {
   const modelsURL = new URL(`${normalizeBaseURL(config.baseURL)}/models`);
-  modelsURL.searchParams.set("client_version", config.clientVersion);
-  const response = await fetch(modelsURL, {
-    headers: {
-      Authorization: `Bearer ${credentials.apiKey}`,
-      ...credentials.headers
-    },
-    signal: toAbortSignal(token)
-  });
-  if (!response.ok) {
-    throw new Error(`Model discovery failed with ${response.status} ${response.statusText}`);
+  if (target === "chatgpt") {
+    modelsURL.searchParams.set("client_version", config.clientVersion);
   }
-  const payload = await response.json();
-  const values = Array.isArray(payload.models) ? payload.models : Array.isArray(payload.data) ? payload.data : [];
-  return values.filter((value) => typeof value === "object" && value !== null).filter(isModelVisible);
-}
-function buildProviderModels(config, upstreamModels) {
-  const models = upstreamModels.flatMap((model) => buildDiscoveredModel(model, config));
-  if (models.length > 0) {
-    return models;
+  const cancellation = bindCancellationToken(token);
+  try {
+    const response = await fetch(modelsURL, {
+      headers: {
+        Authorization: `Bearer ${credentials.apiKey}`,
+        ...credentials.headers
+      },
+      signal: cancellation.signal
+    });
+    if (!response.ok) {
+      throw new Error(`Model discovery failed with ${response.status} ${response.statusText}`);
+    }
+    const payload = await response.json();
+    const values = Array.isArray(payload.models) ? payload.models : Array.isArray(payload.data) ? payload.data : [];
+    return values.filter((value) => typeof value === "object" && value !== null).filter(isModelVisible);
+  } finally {
+    cancellation.dispose();
   }
-  return buildFallbackModels(config);
 }
-function buildFallbackModels(config) {
-  const pinnedModels = FALLBACK_MODELS.flatMap((model) => buildFallbackModelVariants(config, model));
+function buildProviderModels(config, upstreamModels, target = "chatgpt") {
+  const metadata = deduplicateMetadata(upstreamModels.flatMap((model) => {
+    const resolved = resolveDiscoveredModelMetadata(model, target, config);
+    return resolved ? [resolved] : [];
+  }));
+  if (metadata.length > 0) {
+    return deduplicateModels(metadata.flatMap((model) => buildModelVariants(config, model)));
+  }
+  return target === "openai" ? [] : buildFallbackModels(config, target);
+}
+function buildFallbackModels(config, target = "chatgpt") {
+  if (target === "openai") {
+    const metadata = resolveModelMetadata(config.model, target, config);
+    return metadata?.streaming ? buildModelVariants(config, metadata) : [];
+  }
+  const pinnedModels = FALLBACK_MODELS.flatMap((model) => buildModelVariants(config, buildFallbackMetadata(config, model)));
   if (FALLBACK_MODELS.some((model) => model.requestModel === config.model)) {
     return pinnedModels;
   }
   return [
-    ...buildFallbackModelVariants(config, {
+    ...buildModelVariants(config, buildFallbackMetadata(config, {
       requestModel: config.model,
-      maxInputTokens: DEFAULT_CONTEXT_WINDOW,
+      maxInputTokens: DEFAULT_INPUT_LIMIT,
       imageInput: false
-    }),
+    })),
     ...pinnedModels
   ];
+}
+function resolveModelMetadata(modelId, target, config = { model: "gpt-5.6-sol", maxOutputTokens: 8192 }, upstreamModels = []) {
+  const requestModel = parseModelIdentifier(modelId).requestModel;
+  const upstream = upstreamModels.find((model) => getUpstreamModelId(model, target) === requestModel);
+  if (upstream) {
+    return resolveDiscoveredModelMetadata(upstream, target, config);
+  }
+  if (target === "openai") {
+    const entry = findOpenAIModelCatalogEntry(requestModel);
+    return entry ? buildOpenAIMetadata(requestModel, entry) : void 0;
+  }
+  const fallback = FALLBACK_MODELS.find((model) => model.requestModel === requestModel);
+  return buildFallbackMetadata(config, fallback ?? {
+    requestModel,
+    maxInputTokens: DEFAULT_INPUT_LIMIT,
+    imageInput: false
+  });
 }
 function parseModelIdentifier(modelId) {
   let normalized = modelId.startsWith(PROVIDER_MODEL_ID_PREFIX) ? modelId.slice(PROVIDER_MODEL_ID_PREFIX.length) : modelId;
@@ -4071,65 +4301,116 @@ function parseModelIdentifier(modelId) {
   const reasoningEffort = normalizeReasoningEffort2(normalized.slice(delimiterIndex + REASONING_ID_DELIMITER.length));
   return { requestModel, reasoningEffort, serviceTier };
 }
-function buildDiscoveredModel(model, config) {
-  const requestModel = getString2(model.slug) ?? config.model;
+function resolveDiscoveredModelMetadata(model, target, config) {
+  const requestModel = getUpstreamModelId(model, target);
+  if (!requestModel) {
+    return void 0;
+  }
+  if (target === "openai") {
+    const catalogEntry = findOpenAIModelCatalogEntry(requestModel);
+    return catalogEntry?.streaming ? buildOpenAIMetadata(requestModel, catalogEntry) : void 0;
+  }
   const defaultReasoningEffort = normalizeReasoningEffort2(model.default_reasoning_level) ?? MODEL_DEFAULT_REASONING[requestModel];
   const reasoningOptions = getReasoningOptions(model, requestModel, defaultReasoningEffort);
-  return buildModelVariants({
-    config,
+  const maxOutputTokens = getPositiveInteger(model.max_output_tokens) ?? config.maxOutputTokens;
+  const advertisedContext = getPositiveInteger(model.context_window);
+  const maxInputTokens = advertisedContext ?? DEFAULT_INPUT_LIMIT;
+  return {
     requestModel,
     name: getString2(model.display_name) ?? formatDisplayName(requestModel),
-    tooltip: getString2(model.description) ?? "Codex model discovered from the ChatGPT Codex backend.",
-    maxInputTokens: getPositiveInteger(model.context_window) ?? DEFAULT_CONTEXT_WINDOW,
+    tooltip: getString2(model.description) ?? (target === "chatgpt" ? "Codex model discovered from the ChatGPT Codex backend." : "Model discovered from the configured Responses-compatible endpoint."),
     version: getString2(model.comp_hash) ?? "1.0.0",
+    contextWindowTokens: advertisedContext,
+    maxInputTokens,
+    maxOutputTokens,
     imageInput: Array.isArray(model.input_modalities) && model.input_modalities.includes("image"),
-    reasoningOptions,
-    defaultReasoningEffort
-  });
+    toolCalling: true,
+    streaming: true,
+    fastTierAvailability: getFastTierAvailability(model),
+    supportedReasoningEfforts: reasoningOptions.map((option) => option.effort),
+    reasoningEffortsKnown: Array.isArray(model.supported_reasoning_levels),
+    defaultReasoningEffort,
+    source: target
+  };
 }
-function buildModelVariants(options) {
-  return [
-    buildModel({ ...options, serviceTier: void 0 }),
-    buildModel({ ...options, name: `${options.name} Fast`, serviceTier: "fast" })
-  ];
+function buildOpenAIMetadata(requestModel, entry) {
+  return {
+    requestModel,
+    name: entry.name,
+    tooltip: `${entry.description} OpenAI metadata reviewed ${entry.reviewedAt}.`,
+    version: entry.reviewedAt,
+    contextWindowTokens: entry.contextWindowTokens,
+    maxInputTokens: Math.max(1, entry.contextWindowTokens - entry.maxOutputTokens),
+    maxOutputTokens: entry.maxOutputTokens,
+    imageInput: entry.imageInput,
+    toolCalling: entry.toolCalling,
+    streaming: entry.streaming,
+    fastTierAvailability: "unknown",
+    supportedReasoningEfforts: entry.supportedReasoningEfforts,
+    reasoningEffortsKnown: true,
+    defaultReasoningEffort: entry.defaultReasoningEffort,
+    source: "openai",
+    sourceURL: entry.sourceURL,
+    sourceURLs: entry.sourceURLs,
+    reviewedAt: entry.reviewedAt
+  };
 }
-function buildFallbackModelVariants(config, model) {
-  const reasoningEffort = MODEL_DEFAULT_REASONING[model.requestModel];
-  return buildModelVariants({
-    config,
+function buildFallbackMetadata(config, model) {
+  const defaultReasoningEffort = MODEL_DEFAULT_REASONING[model.requestModel];
+  return {
     requestModel: model.requestModel,
     name: formatDisplayName(model.requestModel),
-    tooltip: "Codex fallback model used when discovery is unavailable.",
-    maxInputTokens: model.maxInputTokens,
+    tooltip: "Conservative fallback model used when discovery metadata is unavailable.",
     version: "1.0.0",
+    maxInputTokens: model.maxInputTokens,
+    maxOutputTokens: config.maxOutputTokens,
     imageInput: model.imageInput,
-    reasoningOptions: reasoningEffort ? [toReasoningOption(reasoningEffort)] : [],
-    defaultReasoningEffort: reasoningEffort
-  });
+    toolCalling: true,
+    streaming: true,
+    fastTierAvailability: "unknown",
+    supportedReasoningEfforts: defaultReasoningEffort ? [defaultReasoningEffort] : [],
+    reasoningEffortsKnown: false,
+    defaultReasoningEffort,
+    source: "fallback"
+  };
+}
+function buildModelVariants(config, metadata) {
+  const reasoningOptions = deduplicateReasoning(metadata.supportedReasoningEfforts).map(toReasoningOption);
+  const common = { config, metadata, reasoningOptions };
+  return [
+    buildModel({ ...common }),
+    buildModel({ ...common, name: `${metadata.name} Fast`, serviceTier: "fast" }),
+    ...reasoningOptions.map((option) => buildModel({
+      ...common,
+      name: `${metadata.name} (${REASONING_LABELS[option.effort]})`,
+      explicitReasoningEffort: option.effort
+    }))
+  ];
 }
 function buildModel(options) {
-  const configurationSchema = options.reasoningOptions.length > 1 ? buildThinkingEffortSchema(options.reasoningOptions, options.defaultReasoningEffort ?? options.reasoningOptions[0]?.effort) : void 0;
-  const id = `${PROVIDER_MODEL_ID_PREFIX}${options.requestModel}${options.serviceTier === "fast" ? FAST_ID_SUFFIX : ""}`;
+  const configurationSchema = options.reasoningOptions.length > 1 ? buildThinkingEffortSchema(options.reasoningOptions, options.metadata.defaultReasoningEffort ?? options.reasoningOptions[0]?.effort) : void 0;
+  const id = `${PROVIDER_MODEL_ID_PREFIX}${options.metadata.requestModel}` + (options.explicitReasoningEffort ? `${REASONING_ID_DELIMITER}${options.explicitReasoningEffort}` : "") + (options.serviceTier === "fast" ? FAST_ID_SUFFIX : "");
   const info = {
     id,
-    name: options.name,
-    family: options.requestModel,
-    version: options.version,
-    maxInputTokens: options.maxInputTokens,
-    maxOutputTokens: options.config.maxOutputTokens,
-    tooltip: options.tooltip,
-    detail: buildModelDetail(options.maxInputTokens, options.reasoningOptions, options.defaultReasoningEffort, options.serviceTier),
+    name: options.name ?? options.metadata.name,
+    family: options.metadata.requestModel,
+    version: options.metadata.version,
+    maxInputTokens: options.metadata.maxInputTokens,
+    maxOutputTokens: options.metadata.maxOutputTokens,
+    tooltip: options.metadata.tooltip,
+    detail: buildModelDetail(options.metadata, options.reasoningOptions, options.explicitReasoningEffort, options.serviceTier),
     capabilities: {
-      imageInput: options.imageInput,
-      toolCalling: true
+      imageInput: options.metadata.imageInput,
+      toolCalling: options.metadata.toolCalling
     },
     ...configurationSchema ? { configurationSchema } : {}
   };
   return {
     info,
-    requestModel: options.requestModel,
-    reasoningEffort: options.defaultReasoningEffort,
-    serviceTier: options.serviceTier
+    requestModel: options.metadata.requestModel,
+    reasoningEffort: options.explicitReasoningEffort ?? options.metadata.defaultReasoningEffort,
+    serviceTier: options.serviceTier,
+    metadata: options.metadata
   };
 }
 function buildThinkingEffortSchema(reasoningOptions, defaultEffort) {
@@ -4147,24 +4428,21 @@ function buildThinkingEffortSchema(reasoningOptions, defaultEffort) {
     }
   };
 }
-function getReasoningOptions(model, slug, defaultReasoningEffort) {
+function getReasoningOptions(model, modelId, defaultReasoningEffort) {
   const options = [];
   if (defaultReasoningEffort) {
     options.push(toReasoningOption(defaultReasoningEffort));
   }
   if (Array.isArray(model.supported_reasoning_levels)) {
     for (const level of model.supported_reasoning_levels) {
-      if (typeof level !== "object" || level === null) {
-        continue;
-      }
-      const effort = normalizeReasoningEffort2(level.effort);
+      const effort = normalizeReasoningEffort2(typeof level === "string" ? level : level?.effort);
       if (!effort) {
         continue;
       }
       const existingIndex = options.findIndex((option2) => option2.effort === effort);
       const option = {
         effort,
-        description: getString2(level.description) ?? getReasoningDescription(effort)
+        description: typeof level === "object" && level !== null ? getString2(level.description) ?? getReasoningDescription(effort) : getReasoningDescription(effort)
       };
       if (existingIndex >= 0) {
         options[existingIndex] = option;
@@ -4173,8 +4451,8 @@ function getReasoningOptions(model, slug, defaultReasoningEffort) {
       }
     }
   }
-  if (options.length === 0 && MODEL_DEFAULT_REASONING[slug]) {
-    options.push(toReasoningOption(MODEL_DEFAULT_REASONING[slug]));
+  if (options.length === 0 && MODEL_DEFAULT_REASONING[modelId]) {
+    options.push(toReasoningOption(MODEL_DEFAULT_REASONING[modelId]));
   }
   return options;
 }
@@ -4201,16 +4479,84 @@ function getReasoningDescription(effort) {
       return "Maximum reasoning with automatic task delegation.";
   }
 }
-function buildModelDetail(maxInputTokens, reasoningOptions, defaultEffort, serviceTier) {
-  const parts = [`Context: ${maxInputTokens.toLocaleString()} tokens`];
+function buildModelDetail(metadata, reasoningOptions, explicitReasoningEffort, serviceTier) {
+  const parts = [metadata.contextWindowTokens ? `Context: ${metadata.contextWindowTokens.toLocaleString()} tokens` : `Input limit: ${metadata.maxInputTokens.toLocaleString()} tokens`];
+  parts.push(`Max output: ${metadata.maxOutputTokens.toLocaleString()} tokens`);
   if (reasoningOptions.length > 0) {
     const labels = reasoningOptions.map((option) => REASONING_LABELS[option.effort]).join(", ");
-    parts.push(defaultEffort ? `Thinking: ${labels} (default: ${REASONING_LABELS[defaultEffort]})` : `Thinking: ${labels}`);
+    const selected = explicitReasoningEffort ?? metadata.defaultReasoningEffort;
+    parts.push(selected ? `Thinking: ${labels} (selected: ${REASONING_LABELS[selected]})` : `Thinking: ${labels}`);
   }
   if (serviceTier === "fast") {
-    parts.push("Fast tier");
+    switch (metadata.fastTierAvailability) {
+      case "advertised":
+        parts.push("Fast tier (advertised by endpoint)");
+        break;
+      case "not-advertised":
+        parts.push("Fast tier (compatibility option; not advertised by endpoint)");
+        break;
+      case "unknown":
+        parts.push("Fast tier (compatibility option; availability unknown)");
+        break;
+    }
   }
   return parts.join(" | ");
+}
+function getUpstreamModelId(model, target) {
+  if (target === "chatgpt") {
+    return getString2(model.slug);
+  }
+  if (target === "openai") {
+    return getString2(model.id);
+  }
+  return getString2(model.id) ?? getString2(model.slug);
+}
+function getFastTierAvailability(model) {
+  const tierLists = [model.service_tiers, model.supported_service_tiers].filter(Array.isArray);
+  if (tierLists.some((tiers) => tiers.some(isFastTierValue))) {
+    return "advertised";
+  }
+  const requirements = typeof model.feature_requirements === "object" && model.feature_requirements !== null ? model.feature_requirements : void 0;
+  if (requirements?.fast === true || requirements?.priority === true) {
+    return "advertised";
+  }
+  if (tierLists.length > 0 || requirements?.fast === false || requirements?.priority === false) {
+    return "not-advertised";
+  }
+  return "unknown";
+}
+function isFastTierValue(value) {
+  if (typeof value === "string") {
+    return value.toLowerCase() === "fast" || value.toLowerCase() === "priority";
+  }
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value;
+  return [record.id, record.name, record.slug, record.tier, record.service_tier].some(isFastTierValue);
+}
+function deduplicateMetadata(models) {
+  const seen = /* @__PURE__ */ new Set();
+  return models.filter((model) => {
+    if (seen.has(model.requestModel)) {
+      return false;
+    }
+    seen.add(model.requestModel);
+    return true;
+  });
+}
+function deduplicateModels(models) {
+  const seen = /* @__PURE__ */ new Set();
+  return models.filter((model) => {
+    if (seen.has(model.info.id)) {
+      return false;
+    }
+    seen.add(model.info.id);
+    return true;
+  });
+}
+function deduplicateReasoning(values) {
+  return [...new Set(values)];
 }
 function formatDisplayName(model) {
   return model.trim().split("-").map((part) => {
@@ -4251,15 +4597,52 @@ function getString2(value) {
 function getPositiveInteger(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : void 0;
 }
-function toAbortSignal(token) {
+function bindCancellationToken(token) {
   if (token.isCancellationRequested) {
     const controller2 = new AbortController();
     controller2.abort();
-    return controller2.signal;
+    return { signal: controller2.signal, dispose: () => void 0 };
   }
   const controller = new AbortController();
-  token.onCancellationRequested(() => controller.abort());
-  return controller.signal;
+  const cancellation = token.onCancellationRequested(() => controller.abort());
+  return { signal: controller.signal, dispose: () => cancellation.dispose() };
+}
+
+// src/providerOptions.ts
+function resolveReasoningEffort(selection) {
+  const reasoningOptions = selection.runtimeOptions.modelOptions?.reasoning;
+  return normalizeReasoningEffort3(selection.runtimeOptions.modelConfiguration?.reasoningEffort) ?? normalizeReasoningEffort3(selection.runtimeOptions.configuration?.reasoningEffort) ?? normalizeReasoningEffort3(selection.runtimeOptions.modelOptions?.reasoningEffort) ?? normalizeReasoningEffort3(isRecord(reasoningOptions) ? reasoningOptions.effort : void 0) ?? selection.selectedVariant ?? selection.agentProfile ?? selection.globalDefault ?? selection.modelDefault;
+}
+function clampOutputTokens(configuredLimit, modelMaximum) {
+  if (!Number.isFinite(modelMaximum) || (modelMaximum ?? 0) <= 0) {
+    return configuredLimit;
+  }
+  return Math.min(configuredLimit, Math.floor(modelMaximum));
+}
+function ensureSupportedReasoningEffort(effort, capabilities) {
+  if (effort && capabilities.known && !capabilities.supported.includes(effort)) {
+    const supported = capabilities.supported.length > 0 ? capabilities.supported.join(", ") : "none";
+    throw new RangeError(`Reasoning effort "${effort}" is not supported by effective model "${capabilities.model}". Supported efforts: ${supported}.`);
+  }
+  return effort;
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function normalizeReasoningEffort3(value) {
+  switch (value) {
+    case "none":
+    case "minimal":
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+    case "max":
+    case "ultra":
+      return value;
+    default:
+      return void 0;
+  }
 }
 
 // node_modules/openai/internal/tslib.mjs
@@ -4504,7 +4887,7 @@ var safeJSON = (text) => {
 var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // node_modules/openai/version.mjs
-var VERSION = "6.45.0";
+var VERSION = "6.48.0";
 
 // node_modules/openai/internal/detect-platform.mjs
 var isRunningInBrowser = () => {
@@ -5342,14 +5725,46 @@ var Stream = class _Stream {
     let consumed = false;
     async function* iterLines() {
       const lineDecoder = new LineDecoder();
-      const iter = ReadableStreamToAsyncIterable(readableStream);
-      for await (const chunk of iter) {
-        for (const line of lineDecoder.decode(chunk)) {
+      const reader = readableStream.getReader();
+      let closed = false;
+      let cancelPromise;
+      const cancel = () => {
+        cancelPromise ?? (cancelPromise = reader.cancel());
+        cancelPromise.catch(() => {
+        });
+      };
+      controller.signal.addEventListener("abort", cancel, { once: true });
+      try {
+        if (controller.signal.aborted) {
+          cancel();
+          return;
+        }
+        while (true) {
+          const { value: chunk, done } = await reader.read();
+          if (done) {
+            closed = true;
+            break;
+          }
+          if (controller.signal.aborted)
+            return;
+          for (const line of lineDecoder.decode(chunk)) {
+            if (controller.signal.aborted)
+              return;
+            yield line;
+          }
+        }
+        if (controller.signal.aborted)
+          return;
+        for (const line of lineDecoder.flush()) {
+          if (controller.signal.aborted)
+            return;
           yield line;
         }
-      }
-      for (const line of lineDecoder.flush()) {
-        yield line;
+      } finally {
+        controller.signal.removeEventListener("abort", cancel);
+        if (!closed)
+          cancel();
+        reader.releaseLock();
       }
     }
     async function* iterator() {
@@ -5367,7 +5782,7 @@ var Stream = class _Stream {
         }
         done = true;
       } catch (e) {
-        if (isAbortError(e))
+        if (controller.signal.aborted || isAbortError(e))
           return;
         throw e;
       } finally {
@@ -5892,7 +6307,86 @@ var WorkloadIdentityAuth = class {
   }
 };
 
+// node_modules/openai/internal/headers.mjs
+var brand_privateNullableHeaders = /* @__PURE__ */ Symbol("brand.privateNullableHeaders");
+var httpTokenHeaderName = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+function* iterateHeaders(headers) {
+  if (!headers)
+    return;
+  if (brand_privateNullableHeaders in headers) {
+    const { values, nulls } = headers;
+    yield* values.entries();
+    for (const name of nulls) {
+      yield [name, null];
+    }
+    return;
+  }
+  let shouldClear = false;
+  let iter;
+  if (headers instanceof Headers) {
+    iter = headers.entries();
+  } else if (isReadonlyArray(headers)) {
+    iter = headers;
+  } else {
+    shouldClear = true;
+    iter = Object.entries(headers ?? {});
+  }
+  for (let row of iter) {
+    const name = row[0];
+    if (typeof name !== "string")
+      throw new TypeError("expected header name to be a string");
+    const values = isReadonlyArray(row[1]) ? row[1] : [row[1]];
+    let didClear = false;
+    for (const value of values) {
+      if (value === void 0)
+        continue;
+      if (shouldClear && !didClear) {
+        didClear = true;
+        yield [name, null];
+      }
+      yield [name, value];
+    }
+  }
+}
+var buildHeaders = (newHeaders) => {
+  const targetHeaders = new Headers();
+  const nullHeaders = /* @__PURE__ */ new Set();
+  for (const headers of newHeaders) {
+    const seenHeaders = /* @__PURE__ */ new Set();
+    for (const [name, value] of iterateHeaders(headers)) {
+      if (!httpTokenHeaderName.test(name)) {
+        throw new TypeError(`Header name must be a valid HTTP token ["${name}"]`);
+      }
+      const lowerName = name.toLowerCase();
+      if (!seenHeaders.has(lowerName)) {
+        targetHeaders.delete(lowerName);
+        seenHeaders.add(lowerName);
+      }
+      if (value === null) {
+        targetHeaders.delete(lowerName);
+        nullHeaders.add(lowerName);
+      } else {
+        targetHeaders.append(lowerName, value);
+        nullHeaders.delete(lowerName);
+      }
+    }
+  }
+  return { [brand_privateNullableHeaders]: true, values: targetHeaders, nulls: nullHeaders };
+};
+
 // node_modules/openai/internal/uploads.mjs
+var brand_privateStreamingFile = /* @__PURE__ */ Symbol("brand.privateStreamingFile");
+function toStreamingFile(data, name, options) {
+  if (!name) {
+    throw new TypeError("toStreamingFile requires a non-empty file name");
+  }
+  return {
+    [brand_privateStreamingFile]: true,
+    data,
+    name,
+    ...options?.type ? { type: options.type } : {}
+  };
+}
 var checkFileSupport = () => {
   if (typeof File === "undefined") {
     const { process: process2 } = globalThis;
@@ -5911,9 +6405,15 @@ var isAsyncIterable = (value) => value != null && typeof value === "object" && t
 var maybeMultipartFormRequestOptions = async (opts, fetch2) => {
   if (!hasUploadableValue(opts.body))
     return opts;
+  if (hasStreamingUploadableValue(opts.body)) {
+    return createStreamingFormRequestOptions(opts);
+  }
   return { ...opts, body: await createForm(opts.body, fetch2) };
 };
 var multipartFormRequestOptions = async (opts, fetch2) => {
+  if (hasStreamingUploadableValue(opts.body)) {
+    return createStreamingFormRequestOptions(opts);
+  }
   return { ...opts, body: await createForm(opts.body, fetch2) };
 };
 var supportsFormDataMap = /* @__PURE__ */ new WeakMap();
@@ -5946,7 +6446,22 @@ var createForm = async (body, fetch2) => {
   return form;
 };
 var isNamedBlob = (value) => value instanceof Blob && "name" in value;
-var isUploadable = (value) => typeof value === "object" && value !== null && (value instanceof Response || isAsyncIterable(value) || isNamedBlob(value));
+var isReadableStream = (value) => typeof value === "object" && value !== null && "getReader" in value && typeof value.getReader === "function";
+var isStreamingFile = (value) => typeof value === "object" && value !== null && brand_privateStreamingFile in value;
+var isUploadable = (value) => typeof value === "object" && value !== null && (value instanceof Response || isAsyncIterable(value) || isReadableStream(value) || isStreamingFile(value) || isNamedBlob(value));
+var hasStreamingUploadableValue = (value) => {
+  if (isStreamingFile(value) || isAsyncIterable(value) || isReadableStream(value))
+    return true;
+  if (Array.isArray(value))
+    return value.some(hasStreamingUploadableValue);
+  if (value && typeof value === "object" && !isNamedBlob(value) && !(value instanceof Response)) {
+    for (const k in value) {
+      if (hasStreamingUploadableValue(value[k]))
+        return true;
+    }
+  }
+  return false;
+};
 var hasUploadableValue = (value) => {
   if (isUploadable(value))
     return true;
@@ -5960,6 +6475,115 @@ var hasUploadableValue = (value) => {
   }
   return false;
 };
+var createStreamingFormRequestOptions = (opts) => {
+  const boundary = `openai-${Math.random().toString(36).slice(2)}`;
+  const body = ReadableStreamFrom(iterateMultipartBody(opts.body, boundary));
+  return {
+    ...opts,
+    body,
+    headers: buildHeaders([{ "content-type": `multipart/form-data; boundary=${boundary}` }, opts.headers])
+  };
+};
+async function* iterateMultipartBody(body, boundary) {
+  for await (const { key, value } of iterateFormEntries(body)) {
+    yield encodeUTF8(`--${boundary}\r
+`);
+    if (isUploadable(value)) {
+      const filename = getStreamingFileName(value);
+      const type = getStreamingFileType(value);
+      yield encodeUTF8(`Content-Disposition: form-data; name="${escapeHeaderValue(key)}"; filename="${escapeHeaderValue(filename)}"\r
+Content-Type: ${type}\r
+\r
+`);
+      yield* iterateBytes(getStreamingFileData(value));
+    } else {
+      yield encodeUTF8(`Content-Disposition: form-data; name="${escapeHeaderValue(key)}"\r
+\r
+${String(value)}`);
+    }
+    yield encodeUTF8("\r\n");
+  }
+  yield encodeUTF8(`--${boundary}--\r
+`);
+}
+async function* iterateFormEntries(body) {
+  if (!body || typeof body !== "object")
+    return;
+  for (const [key, value] of Object.entries(body)) {
+    yield* iterateFormValue(key, value);
+  }
+}
+async function* iterateFormValue(key, value) {
+  if (value === void 0)
+    return;
+  if (value == null) {
+    throw new TypeError(`Received null for "${key}"; to pass null in FormData, you must use the string 'null'`);
+  }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || isUploadable(value)) {
+    yield { key, value };
+  } else if (Array.isArray(value)) {
+    for (const entry of value) {
+      yield* iterateFormValue(key + "[]", entry);
+    }
+  } else if (typeof value === "object") {
+    for (const [name, prop] of Object.entries(value)) {
+      yield* iterateFormValue(`${key}[${name}]`, prop);
+    }
+  } else {
+    throw new TypeError(`Invalid value given to form, expected a string, number, boolean, object, Array, File or Blob but got ${value} instead`);
+  }
+}
+function getStreamingFileName(value) {
+  return isStreamingFile(value) ? value.name : getName(value) ?? "unknown_file";
+}
+function getStreamingFileType(value) {
+  if (isStreamingFile(value))
+    return value.type || "application/octet-stream";
+  if (isNamedBlob(value) && value.type)
+    return value.type;
+  if (value instanceof Response)
+    return value.headers.get("content-type") || "application/octet-stream";
+  return "application/octet-stream";
+}
+function getStreamingFileData(value) {
+  if (isStreamingFile(value))
+    return value.data;
+  return value;
+}
+async function* iterateBytes(value) {
+  if (typeof value === "string") {
+    yield encodeUTF8(value);
+  } else if (ArrayBuffer.isView(value)) {
+    yield new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  } else if (value instanceof ArrayBuffer) {
+    yield new Uint8Array(value);
+  } else if (value instanceof Response) {
+    if (value.body) {
+      yield* iterateBytes(value.body);
+    } else {
+      yield* iterateBytes(await value.blob());
+    }
+  } else if (value instanceof Blob) {
+    if (typeof value.stream === "function") {
+      yield* iterateBytes(value.stream());
+    } else {
+      yield new Uint8Array(await value.arrayBuffer());
+    }
+  } else if (isReadableStream(value)) {
+    for await (const chunk of ReadableStreamToAsyncIterable(value)) {
+      yield* iterateBytes(chunk);
+    }
+  } else if (isAsyncIterable(value)) {
+    for await (const chunk of value) {
+      yield* iterateBytes(chunk);
+    }
+  } else {
+    throw new TypeError(`Invalid streaming file chunk: ${String(value)}`);
+  }
+}
+function escapeHeaderValue(value) {
+  return value.replace(/["\\\r\n]/g, (character) => encodeURIComponent(character));
+}
 var addFormValue = async (form, key, value) => {
   if (value === void 0)
     return;
@@ -6284,8 +6908,13 @@ var EventStream = class {
   }
   _run(executor) {
     setTimeout(() => {
-      executor().then(() => {
-        this._emitFinal();
+      Promise.resolve().then(executor).then(() => {
+        try {
+          this._emitFinal();
+        } catch (error) {
+          __classPrivateFieldGet(this, _EventStream_instances, "m", _EventStream_handleError).call(this, error);
+          return;
+        }
         this._emit("end");
       }, __classPrivateFieldGet(this, _EventStream_instances, "m", _EventStream_handleError).bind(this));
     }, 0);
@@ -6376,6 +7005,102 @@ var EventStream = class {
       this.once(event, resolve);
     });
   }
+  /**
+   * Returns an async iterator that yields every time the event is triggered.
+   * The iterator ends when the stream ends and rejects if the stream errors
+   * or is aborted. If you request the 'error' or 'abort' event, the iterator
+   * yields that event instead of rejecting.
+   *
+   * Example:
+   *
+   *   for await (const [message] of stream.events('message')) {
+   *     await processMessage(message);
+   *   }
+   */
+  events(event) {
+    const pushQueue = [];
+    const readQueue = [];
+    let ended = this.ended;
+    let failure;
+    let failureDelivered = false;
+    const doneResult = () => ({ value: void 0, done: true });
+    const finishReaders = () => {
+      while (readQueue.length) {
+        readQueue.shift().resolve(doneResult());
+      }
+    };
+    const rejectReader = () => {
+      if (!failure || failureDelivered || !readQueue.length)
+        return;
+      failureDelivered = true;
+      readQueue.shift().reject(failure);
+    };
+    const cleanup = () => {
+      this.off(event, onEvent);
+      this.off("end", onEnd);
+      if (event !== "error")
+        this.off("error", onFailure);
+      if (event !== "abort")
+        this.off("abort", onFailure);
+    };
+    const onEvent = (...args) => {
+      if (ended)
+        return;
+      const reader = readQueue.shift();
+      if (reader) {
+        reader.resolve({ value: args, done: false });
+      } else {
+        pushQueue.push(args);
+      }
+    };
+    const onFailure = (error) => {
+      failure = error;
+      if (!pushQueue.length)
+        rejectReader();
+    };
+    const onEnd = () => {
+      ended = true;
+      cleanup();
+      if (!pushQueue.length) {
+        rejectReader();
+        finishReaders();
+      }
+    };
+    if (!ended) {
+      this.on(event, onEvent);
+      this.on("end", onEnd);
+      if (event !== "error")
+        this.on("error", onFailure);
+      if (event !== "abort")
+        this.on("abort", onFailure);
+    }
+    return {
+      next: () => {
+        const value = pushQueue.shift();
+        if (value)
+          return Promise.resolve({ value, done: false });
+        if (failure && !failureDelivered) {
+          failureDelivered = true;
+          return Promise.reject(failure);
+        }
+        if (ended)
+          return Promise.resolve(doneResult());
+        return new Promise((resolve, reject) => {
+          readQueue.push({ resolve, reject });
+        });
+      },
+      return: () => {
+        ended = true;
+        pushQueue.length = 0;
+        cleanup();
+        finishReaders();
+        return Promise.resolve(doneResult());
+      },
+      [Symbol.asyncIterator]() {
+        return this;
+      }
+    };
+  }
   async done() {
     __classPrivateFieldSet(this, _EventStream_catchingPromiseCreated, true, "f");
     await __classPrivateFieldGet(this, _EventStream_endPromise, "f");
@@ -6456,6 +7181,15 @@ var _AbstractChatCompletionRunner_calculateTotalUsage;
 var _AbstractChatCompletionRunner_validateParams;
 var _AbstractChatCompletionRunner_stringifyFunctionCallResult;
 var DEFAULT_MAX_CHAT_COMPLETIONS = 10;
+function normalizeToolCallIds(chatCompletion) {
+  for (const choice of chatCompletion.choices) {
+    for (const toolCall of choice.message.tool_calls ?? []) {
+      if (!toolCall.id) {
+        toolCall.id = `call_${uuid4()}`;
+      }
+    }
+  }
+}
 var AbstractChatCompletionRunner = class extends EventStream {
   constructor() {
     super(...arguments);
@@ -6464,6 +7198,7 @@ var AbstractChatCompletionRunner = class extends EventStream {
     this.messages = [];
   }
   _addChatCompletion(chatCompletion) {
+    normalizeToolCallIds(chatCompletion);
     this._chatCompletions.push(chatCompletion);
     this._emit("chatCompletion", chatCompletion);
     const message = chatCompletion.choices[0]?.message;
@@ -6569,7 +7304,8 @@ var AbstractChatCompletionRunner = class extends EventStream {
   }
   async _runTools(client, params, runner, options) {
     const role = "tool";
-    const { tool_choice = "auto", stream, ...restParams } = params;
+    const { tool_choice = "auto", stream, toolContext: inputToolContext, ...restParams } = params;
+    const toolContext = inputToolContext;
     const singleFunctionToCall = typeof tool_choice !== "string" && tool_choice.type === "function" && tool_choice?.function?.name;
     const { maxChatCompletions = DEFAULT_MAX_CHAT_COMPLETIONS, afterCompletion } = options || {};
     const inputTools = params.tools.map((tool) => {
@@ -6632,9 +7368,9 @@ var AbstractChatCompletionRunner = class extends EventStream {
           const content2 = error instanceof Error ? error.message : String(error);
           return { message: { role, tool_call_id, content: content2 }, functionCalled: false };
         }
-        rawContent = await fn.function(parsed, runner);
+        rawContent = await fn.function(parsed, runner, toolContext);
       } else {
-        rawContent = await fn.function(args, runner);
+        rawContent = await fn.function(args, runner, toolContext);
       }
       const content = __classPrivateFieldGet(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_stringifyFunctionCallResult).call(this, rawContent);
       return { message: { role, tool_call_id, content }, functionCalled: true };
@@ -6984,6 +7720,30 @@ var _ChatCompletionStream_emitContentDoneEvents;
 var _ChatCompletionStream_endRequest;
 var _ChatCompletionStream_getAutoParseableResponseFormat;
 var _ChatCompletionStream_accumulateChatCompletion;
+var CHAT_COMPLETION_READABLE_STREAM_MESSAGE_PREFIX = "chat.completion.chunk.message:";
+function makeChatCompletionReadableStreamMessageChunk(chunk, message, toolCallIds) {
+  const payload = {
+    type: "message",
+    message,
+    ...toolCallIds ? { tool_call_ids: toolCallIds } : {}
+  };
+  return {
+    id: chunk.id,
+    choices: [],
+    created: chunk.created,
+    model: chunk.model,
+    object: `${CHAT_COMPLETION_READABLE_STREAM_MESSAGE_PREFIX}${JSON.stringify(payload)}`
+  };
+}
+function isChatCompletionReadableStreamMessage(item) {
+  return "type" in item && item.type === "message" && "message" in item || "object" in item && typeof item.object === "string" && item.object.startsWith(CHAT_COMPLETION_READABLE_STREAM_MESSAGE_PREFIX);
+}
+function getChatCompletionReadableStreamMessage(item) {
+  if ("type" in item) {
+    return item;
+  }
+  return JSON.parse(item.object.slice(CHAT_COMPLETION_READABLE_STREAM_MESSAGE_PREFIX.length));
+}
 var ChatCompletionStream = class _ChatCompletionStream extends AbstractChatCompletionRunner {
   constructor(params) {
     super();
@@ -7034,17 +7794,42 @@ var ChatCompletionStream = class _ChatCompletionStream extends AbstractChatCompl
     this._connected();
     const stream = Stream.fromReadableStream(readableStream, this.controller);
     let chatId;
-    for await (const chunk of stream) {
-      if (chatId && chatId !== chunk.id) {
+    for await (const item of stream) {
+      if (isChatCompletionReadableStreamMessage(item)) {
+        const message = getChatCompletionReadableStreamMessage(item);
+        if (__classPrivateFieldGet(this, _ChatCompletionStream_currentChatCompletionSnapshot, "f")) {
+          const toolCalls = __classPrivateFieldGet(this, _ChatCompletionStream_currentChatCompletionSnapshot, "f").choices[0]?.message.tool_calls;
+          for (const [index, id] of message.tool_call_ids?.entries() ?? []) {
+            const toolCall = toolCalls?.[index];
+            if (toolCall && id) {
+              toolCall.id = id;
+            }
+          }
+          this._addChatCompletion(__classPrivateFieldGet(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_endRequest).call(this));
+          chatId = void 0;
+        }
+        this._addMessage(message.message);
+        continue;
+      }
+      const chunk = item;
+      if (chatId && chunk.id && chatId !== chunk.id) {
         this._addChatCompletion(__classPrivateFieldGet(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_endRequest).call(this));
       }
       __classPrivateFieldGet(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_addChunk).call(this, chunk);
-      chatId = chunk.id;
+      if (chunk.id)
+        chatId = chunk.id;
     }
     if (stream.controller.signal?.aborted) {
       throw new APIUserAbortError();
     }
-    return this._addChatCompletion(__classPrivateFieldGet(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_endRequest).call(this));
+    if (__classPrivateFieldGet(this, _ChatCompletionStream_currentChatCompletionSnapshot, "f")) {
+      return this._addChatCompletion(__classPrivateFieldGet(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_endRequest).call(this));
+    }
+    const lastChatCompletion = this._chatCompletions[this._chatCompletions.length - 1];
+    if (lastChatCompletion) {
+      return lastChatCompletion;
+    }
+    throw new OpenAIError(`request ended without sending any chunks`);
   }
   [(_ChatCompletionStream_params = /* @__PURE__ */ new WeakMap(), _ChatCompletionStream_choiceEventStates = /* @__PURE__ */ new WeakMap(), _ChatCompletionStream_currentChatCompletionSnapshot = /* @__PURE__ */ new WeakMap(), _ChatCompletionStream_instances = /* @__PURE__ */ new WeakSet(), _ChatCompletionStream_beginRequest = function _ChatCompletionStream_beginRequest2() {
     if (this.ended)
@@ -7072,17 +7857,18 @@ var ChatCompletionStream = class _ChatCompletionStream extends AbstractChatCompl
     this._emit("chunk", chunk, completion);
     for (const choice of chunk.choices) {
       const choiceSnapshot = completion.choices[choice.index];
-      if (choice.delta.content != null && choiceSnapshot.message?.role === "assistant" && choiceSnapshot.message?.content) {
-        this._emit("content", choice.delta.content, choiceSnapshot.message.content);
+      const { delta } = choice;
+      if (delta?.content != null && choiceSnapshot.message?.role === "assistant" && choiceSnapshot.message?.content) {
+        this._emit("content", delta.content, choiceSnapshot.message.content);
         this._emit("content.delta", {
-          delta: choice.delta.content,
+          delta: delta.content,
           snapshot: choiceSnapshot.message.content,
           parsed: choiceSnapshot.message.parsed
         });
       }
-      if (choice.delta.refusal != null && choiceSnapshot.message?.role === "assistant" && choiceSnapshot.message?.refusal) {
+      if (delta?.refusal != null && choiceSnapshot.message?.role === "assistant" && choiceSnapshot.message?.refusal) {
         this._emit("refusal.delta", {
-          delta: choice.delta.refusal,
+          delta: delta.refusal,
           snapshot: choiceSnapshot.message.refusal
         });
       }
@@ -7105,7 +7891,7 @@ var ChatCompletionStream = class _ChatCompletionStream extends AbstractChatCompl
           __classPrivateFieldGet(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_emitToolCallDoneEvent).call(this, choiceSnapshot, state.current_tool_call_index);
         }
       }
-      for (const toolCall of choice.delta.tool_calls ?? []) {
+      for (const toolCall of delta?.tool_calls ?? []) {
         if (state.current_tool_call_index !== toolCall.index) {
           __classPrivateFieldGet(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_emitContentDoneEvents).call(this, choiceSnapshot);
           if (state.current_tool_call_index != null) {
@@ -7114,7 +7900,7 @@ var ChatCompletionStream = class _ChatCompletionStream extends AbstractChatCompl
         }
         state.current_tool_call_index = toolCall.index;
       }
-      for (const toolCallDelta of choice.delta.tool_calls ?? []) {
+      for (const toolCallDelta of delta?.tool_calls ?? []) {
         const toolCallSnapshot = choiceSnapshot.message.tool_calls?.[toolCallDelta.index];
         if (!toolCallSnapshot?.type) {
           continue;
@@ -7203,7 +7989,7 @@ var ChatCompletionStream = class _ChatCompletionStream extends AbstractChatCompl
         ...rest,
         choices: []
       }, "f");
-    } else {
+    } else if (chunk.id) {
       Object.assign(snapshot, rest);
     }
     for (const { delta, finish_reason, index, logprobs = null, ...other } of chunk.choices) {
@@ -7396,10 +8182,6 @@ function finalizeChatCompletion(snapshot, params) {
             tool_calls: tool_calls.map((tool_call, i) => {
               const { function: fn, type, id: id2, ...toolRest } = tool_call;
               const { arguments: args, name, ...fnRest } = fn || {};
-              if (id2 == null) {
-                throw new OpenAIError(`missing choices[${index}].tool_calls[${i}].id
-${str(snapshot)}`);
-              }
               if (type == null) {
                 throw new OpenAIError(`missing choices[${index}].tool_calls[${i}].type
 ${str(snapshot)}`);
@@ -7412,7 +8194,12 @@ ${str(snapshot)}`);
                 throw new OpenAIError(`missing choices[${index}].tool_calls[${i}].function.arguments
 ${str(snapshot)}`);
               }
-              return { ...toolRest, id: id2, type, function: { ...fnRest, name, arguments: args } };
+              return {
+                ...toolRest,
+                id: id2 || `call_${uuid4()}`,
+                type,
+                function: { ...fnRest, name, arguments: args }
+              };
             })
           }
         };
@@ -7447,6 +8234,79 @@ var ChatCompletionStreamingRunner = class _ChatCompletionStreamingRunner extends
     const runner = new _ChatCompletionStreamingRunner(null);
     runner._run(() => runner._fromReadableStream(stream));
     return runner;
+  }
+  toReadableStream() {
+    const pushQueue = [];
+    const readQueue = [];
+    let done = false;
+    let lastChunk;
+    let toolCallIds;
+    const pushEvent = (event) => {
+      const reader = readQueue.shift();
+      if (reader) {
+        reader.resolve(event);
+      } else {
+        pushQueue.push(event);
+      }
+    };
+    this.on("chunk", (chunk) => {
+      lastChunk = chunk;
+      pushEvent(chunk);
+    });
+    this.on("message", (message) => {
+      if (isAssistantMessage(message)) {
+        toolCallIds = message.tool_calls?.map((toolCall) => toolCall.id);
+        return;
+      }
+      if (isToolMessage(message)) {
+        if (!lastChunk) {
+          throw new OpenAIError("cannot serialize a tool message before receiving any chunks");
+        }
+        pushEvent(makeChatCompletionReadableStreamMessageChunk(lastChunk, message, toolCallIds));
+      }
+    });
+    this.on("end", () => {
+      done = true;
+      for (const reader of readQueue) {
+        reader.resolve(void 0);
+      }
+      readQueue.length = 0;
+    });
+    this.on("abort", (err) => {
+      done = true;
+      for (const reader of readQueue) {
+        reader.reject(err);
+      }
+      readQueue.length = 0;
+    });
+    this.on("error", (err) => {
+      done = true;
+      for (const reader of readQueue) {
+        reader.reject(err);
+      }
+      readQueue.length = 0;
+    });
+    const iterator = () => ({
+      next: async () => {
+        if (!pushQueue.length) {
+          if (done) {
+            return { value: void 0, done: true };
+          }
+          return new Promise((resolve, reject) => readQueue.push({ resolve, reject })).then((event2) => event2 ? { value: event2, done: false } : { value: void 0, done: true });
+        }
+        const event = pushQueue.shift();
+        if (!event) {
+          return { value: void 0, done: true };
+        }
+        return { value: event, done: false };
+      },
+      return: async () => {
+        this.abort();
+        return { value: void 0, done: true };
+      }
+    });
+    const stream = new Stream(iterator, this.controller);
+    return stream.toReadableStream();
   }
   static runTools(client, params, options) {
     const runner = new _ChatCompletionStreamingRunner(
@@ -8967,100 +9827,6 @@ var Roles3 = class extends APIResource {
   }
 };
 
-// node_modules/openai/resources/admin/organization/projects/service-accounts.mjs
-var ServiceAccounts = class extends APIResource {
-  /**
-   * Creates a new service account in the project. This also returns an unredacted
-   * API key for the service account.
-   *
-   * @example
-   * ```ts
-   * const serviceAccount =
-   *   await client.admin.organization.projects.serviceAccounts.create(
-   *     'project_id',
-   *     { name: 'name' },
-   *   );
-   * ```
-   */
-  create(projectID, body, options) {
-    return this._client.post(path`/organization/projects/${projectID}/service_accounts`, {
-      body,
-      ...options,
-      __security: { adminAPIKeyAuth: true }
-    });
-  }
-  /**
-   * Retrieves a service account in the project.
-   *
-   * @example
-   * ```ts
-   * const projectServiceAccount =
-   *   await client.admin.organization.projects.serviceAccounts.retrieve(
-   *     'service_account_id',
-   *     { project_id: 'project_id' },
-   *   );
-   * ```
-   */
-  retrieve(serviceAccountID, params, options) {
-    const { project_id } = params;
-    return this._client.get(path`/organization/projects/${project_id}/service_accounts/${serviceAccountID}`, {
-      ...options,
-      __security: { adminAPIKeyAuth: true }
-    });
-  }
-  /**
-   * Updates a service account in the project.
-   *
-   * @example
-   * ```ts
-   * const projectServiceAccount =
-   *   await client.admin.organization.projects.serviceAccounts.update(
-   *     'service_account_id',
-   *     { project_id: 'project_id' },
-   *   );
-   * ```
-   */
-  update(serviceAccountID, params, options) {
-    const { project_id, ...body } = params;
-    return this._client.post(path`/organization/projects/${project_id}/service_accounts/${serviceAccountID}`, { body, ...options, __security: { adminAPIKeyAuth: true } });
-  }
-  /**
-   * Returns a list of service accounts in the project.
-   *
-   * @example
-   * ```ts
-   * // Automatically fetches more pages as needed.
-   * for await (const projectServiceAccount of client.admin.organization.projects.serviceAccounts.list(
-   *   'project_id',
-   * )) {
-   *   // ...
-   * }
-   * ```
-   */
-  list(projectID, query = {}, options) {
-    return this._client.getAPIList(path`/organization/projects/${projectID}/service_accounts`, ConversationCursorPage, { query, ...options, __security: { adminAPIKeyAuth: true } });
-  }
-  /**
-   * Deletes a service account from the project.
-   *
-   * Returns confirmation of service account deletion, or an error if the project is
-   * archived (archived projects have no service accounts).
-   *
-   * @example
-   * ```ts
-   * const serviceAccount =
-   *   await client.admin.organization.projects.serviceAccounts.delete(
-   *     'service_account_id',
-   *     { project_id: 'project_id' },
-   *   );
-   * ```
-   */
-  delete(serviceAccountID, params, options) {
-    const { project_id } = params;
-    return this._client.delete(path`/organization/projects/${project_id}/service_accounts/${serviceAccountID}`, { ...options, __security: { adminAPIKeyAuth: true } });
-  }
-};
-
 // node_modules/openai/resources/admin/organization/projects/spend-alerts.mjs
 var SpendAlerts2 = class extends APIResource {
   /**
@@ -9337,6 +10103,125 @@ var Groups2 = class extends APIResource {
   }
 };
 Groups2.Roles = Roles4;
+
+// node_modules/openai/resources/admin/organization/projects/service-accounts/api-keys.mjs
+var APIKeys2 = class extends APIResource {
+  /**
+   * Creates an API key for a service account in the project.
+   *
+   * @example
+   * ```ts
+   * const apiKey =
+   *   await client.admin.organization.projects.serviceAccounts.apiKeys.create(
+   *     'service_account_id',
+   *     { project_id: 'project_id' },
+   *   );
+   * ```
+   */
+  create(serviceAccountID, params, options) {
+    const { project_id, ...body } = params;
+    return this._client.post(path`/organization/projects/${project_id}/service_accounts/${serviceAccountID}/api_keys`, { body, ...options, __security: { adminAPIKeyAuth: true } });
+  }
+};
+
+// node_modules/openai/resources/admin/organization/projects/service-accounts/service-accounts.mjs
+var ServiceAccounts = class extends APIResource {
+  constructor() {
+    super(...arguments);
+    this.apiKeys = new APIKeys2(this._client);
+  }
+  /**
+   * Creates a new service account in the project. By default, this also returns an
+   * unredacted API key for the service account.
+   *
+   * @example
+   * ```ts
+   * const serviceAccount =
+   *   await client.admin.organization.projects.serviceAccounts.create(
+   *     'project_id',
+   *     { name: 'name' },
+   *   );
+   * ```
+   */
+  create(projectID, body, options) {
+    return this._client.post(path`/organization/projects/${projectID}/service_accounts`, {
+      body,
+      ...options,
+      __security: { adminAPIKeyAuth: true }
+    });
+  }
+  /**
+   * Retrieves a service account in the project.
+   *
+   * @example
+   * ```ts
+   * const projectServiceAccount =
+   *   await client.admin.organization.projects.serviceAccounts.retrieve(
+   *     'service_account_id',
+   *     { project_id: 'project_id' },
+   *   );
+   * ```
+   */
+  retrieve(serviceAccountID, params, options) {
+    const { project_id } = params;
+    return this._client.get(path`/organization/projects/${project_id}/service_accounts/${serviceAccountID}`, {
+      ...options,
+      __security: { adminAPIKeyAuth: true }
+    });
+  }
+  /**
+   * Updates a service account in the project.
+   *
+   * @example
+   * ```ts
+   * const projectServiceAccount =
+   *   await client.admin.organization.projects.serviceAccounts.update(
+   *     'service_account_id',
+   *     { project_id: 'project_id' },
+   *   );
+   * ```
+   */
+  update(serviceAccountID, params, options) {
+    const { project_id, ...body } = params;
+    return this._client.post(path`/organization/projects/${project_id}/service_accounts/${serviceAccountID}`, { body, ...options, __security: { adminAPIKeyAuth: true } });
+  }
+  /**
+   * Returns a list of service accounts in the project.
+   *
+   * @example
+   * ```ts
+   * // Automatically fetches more pages as needed.
+   * for await (const projectServiceAccount of client.admin.organization.projects.serviceAccounts.list(
+   *   'project_id',
+   * )) {
+   *   // ...
+   * }
+   * ```
+   */
+  list(projectID, query = {}, options) {
+    return this._client.getAPIList(path`/organization/projects/${projectID}/service_accounts`, ConversationCursorPage, { query, ...options, __security: { adminAPIKeyAuth: true } });
+  }
+  /**
+   * Deletes a service account from the project.
+   *
+   * Returns confirmation of service account deletion, or an error if the project is
+   * archived (archived projects have no service accounts).
+   *
+   * @example
+   * ```ts
+   * const serviceAccount =
+   *   await client.admin.organization.projects.serviceAccounts.delete(
+   *     'service_account_id',
+   *     { project_id: 'project_id' },
+   *   );
+   * ```
+   */
+  delete(serviceAccountID, params, options) {
+    const { project_id } = params;
+    return this._client.delete(path`/organization/projects/${project_id}/service_accounts/${serviceAccountID}`, { ...options, __security: { adminAPIKeyAuth: true } });
+  }
+};
+ServiceAccounts.APIKeys = APIKeys2;
 
 // node_modules/openai/resources/admin/organization/projects/users/roles.mjs
 var Roles5 = class extends APIResource {
@@ -9832,69 +10717,6 @@ var Admin = class extends APIResource {
 };
 Admin.Organization = Organization;
 
-// node_modules/openai/internal/headers.mjs
-var brand_privateNullableHeaders = /* @__PURE__ */ Symbol("brand.privateNullableHeaders");
-function* iterateHeaders(headers) {
-  if (!headers)
-    return;
-  if (brand_privateNullableHeaders in headers) {
-    const { values, nulls } = headers;
-    yield* values.entries();
-    for (const name of nulls) {
-      yield [name, null];
-    }
-    return;
-  }
-  let shouldClear = false;
-  let iter;
-  if (headers instanceof Headers) {
-    iter = headers.entries();
-  } else if (isReadonlyArray(headers)) {
-    iter = headers;
-  } else {
-    shouldClear = true;
-    iter = Object.entries(headers ?? {});
-  }
-  for (let row of iter) {
-    const name = row[0];
-    if (typeof name !== "string")
-      throw new TypeError("expected header name to be a string");
-    const values = isReadonlyArray(row[1]) ? row[1] : [row[1]];
-    let didClear = false;
-    for (const value of values) {
-      if (value === void 0)
-        continue;
-      if (shouldClear && !didClear) {
-        didClear = true;
-        yield [name, null];
-      }
-      yield [name, value];
-    }
-  }
-}
-var buildHeaders = (newHeaders) => {
-  const targetHeaders = new Headers();
-  const nullHeaders = /* @__PURE__ */ new Set();
-  for (const headers of newHeaders) {
-    const seenHeaders = /* @__PURE__ */ new Set();
-    for (const [name, value] of iterateHeaders(headers)) {
-      const lowerName = name.toLowerCase();
-      if (!seenHeaders.has(lowerName)) {
-        targetHeaders.delete(name);
-        seenHeaders.add(lowerName);
-      }
-      if (value === null) {
-        targetHeaders.delete(name);
-        nullHeaders.add(lowerName);
-      } else {
-        targetHeaders.append(name, value);
-        nullHeaders.delete(lowerName);
-      }
-    }
-  }
-  return { [brand_privateNullableHeaders]: true, values: targetHeaders, nulls: nullHeaders };
-};
-
 // node_modules/openai/resources/audio/speech.mjs
 var Speech = class extends APIResource {
   /**
@@ -10257,6 +11079,172 @@ var ChatKit = class extends APIResource {
 ChatKit.Sessions = Sessions2;
 ChatKit.Threads = Threads;
 
+// node_modules/openai/resources/beta/responses/input-items.mjs
+var InputItems = class extends APIResource {
+  /**
+   * Returns a list of input items for a given response.
+   *
+   * @example
+   * ```ts
+   * // Automatically fetches more pages as needed.
+   * for await (const betaResponseItem of client.beta.responses.inputItems.list(
+   *   'response_id',
+   * )) {
+   *   // ...
+   * }
+   * ```
+   */
+  list(responseID, params = {}, options) {
+    const { betas, ...query } = params ?? {};
+    return this._client.getAPIList(path`/responses/${responseID}/input_items?beta=true`, CursorPage, {
+      query,
+      ...options,
+      headers: buildHeaders([
+        { ...betas?.toString() != null ? { "openai-beta": betas?.toString() } : void 0 },
+        options?.headers
+      ]),
+      __security: { bearerAuth: true }
+    });
+  }
+};
+
+// node_modules/openai/resources/beta/responses/input-tokens.mjs
+var InputTokens = class extends APIResource {
+  /**
+   * Returns input token counts of the request.
+   *
+   * Returns an object with `object` set to `response.input_tokens` and an
+   * `input_tokens` count.
+   *
+   * @example
+   * ```ts
+   * const response =
+   *   await client.beta.responses.inputTokens.count();
+   * ```
+   */
+  count(params = {}, options) {
+    const { betas, ...body } = params ?? {};
+    return this._client.post("/responses/input_tokens?beta=true", {
+      body,
+      ...options,
+      headers: buildHeaders([
+        { ...betas?.toString() != null ? { "openai-beta": betas?.toString() } : void 0 },
+        options?.headers
+      ]),
+      __security: { bearerAuth: true }
+    });
+  }
+};
+
+// node_modules/openai/resources/beta/responses/responses.mjs
+var Responses = class extends APIResource {
+  constructor() {
+    super(...arguments);
+    this.inputItems = new InputItems(this._client);
+    this.inputTokens = new InputTokens(this._client);
+  }
+  create(params, options) {
+    const { betas, ...body } = params;
+    return this._client.post("/responses?beta=true", {
+      body,
+      ...options,
+      headers: buildHeaders([
+        { ...betas?.toString() != null ? { "openai-beta": betas?.toString() } : void 0 },
+        options?.headers
+      ]),
+      stream: params.stream ?? false,
+      __security: { bearerAuth: true }
+    });
+  }
+  retrieve(responseID, params = {}, options) {
+    const { betas, ...query } = params ?? {};
+    return this._client.get(path`/responses/${responseID}?beta=true`, {
+      query,
+      ...options,
+      headers: buildHeaders([
+        { ...betas?.toString() != null ? { "openai-beta": betas?.toString() } : void 0 },
+        options?.headers
+      ]),
+      stream: params?.stream ?? false,
+      __security: { bearerAuth: true }
+    });
+  }
+  /**
+   * Deletes a model response with the given ID.
+   *
+   * @example
+   * ```ts
+   * await client.beta.responses.delete(
+   *   'resp_677efb5139a88190b512bc3fef8e535d',
+   * );
+   * ```
+   */
+  delete(responseID, params = {}, options) {
+    const { betas } = params ?? {};
+    return this._client.delete(path`/responses/${responseID}?beta=true`, {
+      ...options,
+      headers: buildHeaders([
+        { Accept: "*/*", ...betas?.toString() != null ? { "openai-beta": betas?.toString() } : void 0 },
+        options?.headers
+      ]),
+      __security: { bearerAuth: true }
+    });
+  }
+  /**
+   * Cancels a model response with the given ID. Only responses created with the
+   * `background` parameter set to `true` can be cancelled.
+   * [Learn more](https://platform.openai.com/docs/guides/background).
+   *
+   * @example
+   * ```ts
+   * const betaResponse = await client.beta.responses.cancel(
+   *   'resp_677efb5139a88190b512bc3fef8e535d',
+   * );
+   * ```
+   */
+  cancel(responseID, params = {}, options) {
+    const { betas } = params ?? {};
+    return this._client.post(path`/responses/${responseID}/cancel?beta=true`, {
+      ...options,
+      headers: buildHeaders([
+        { ...betas?.toString() != null ? { "openai-beta": betas?.toString() } : void 0 },
+        options?.headers
+      ]),
+      __security: { bearerAuth: true }
+    });
+  }
+  /**
+   * Compact a conversation. Returns a compacted response object.
+   *
+   * Learn when and how to compact long-running conversations in the
+   * [conversation state guide](https://platform.openai.com/docs/guides/conversation-state#managing-the-context-window).
+   * For ZDR-compatible compaction details, see
+   * [Compaction (advanced)](https://platform.openai.com/docs/guides/conversation-state#compaction-advanced).
+   *
+   * @example
+   * ```ts
+   * const betaCompactedResponse =
+   *   await client.beta.responses.compact({
+   *     model: 'gpt-5.6-sol',
+   *   });
+   * ```
+   */
+  compact(params, options) {
+    const { betas, ...body } = params;
+    return this._client.post("/responses/compact?beta=true", {
+      body,
+      ...options,
+      headers: buildHeaders([
+        { ...betas?.toString() != null ? { "openai-beta": betas?.toString() } : void 0 },
+        options?.headers
+      ]),
+      __security: { bearerAuth: true }
+    });
+  }
+};
+Responses.InputItems = InputItems;
+Responses.InputTokens = InputTokens;
+
 // node_modules/openai/resources/beta/threads/messages.mjs
 var Messages2 = class extends APIResource {
   /**
@@ -10432,11 +11420,12 @@ var AssistantStream = class extends EventStream {
     const readQueue = [];
     let done = false;
     this.on("event", (event) => {
+      const eventCopy = structuredClone(event);
       const reader = readQueue.shift();
       if (reader) {
-        reader.resolve(event);
+        reader.resolve(eventCopy);
       } else {
-        pushQueue.push(event);
+        pushQueue.push(eventCopy);
       }
     });
     this.on("end", () => {
@@ -10630,7 +11619,7 @@ var AssistantStream = class extends EventStream {
           }
           const accEntry = accValue[index];
           if (accEntry == null) {
-            accValue.push(deltaEntry);
+            accValue[index] = deltaEntry;
           } else {
             accValue[index] = this.accumulateDelta(accEntry, deltaEntry);
           }
@@ -11169,12 +12158,14 @@ var Beta = class extends APIResource {
   constructor() {
     super(...arguments);
     this.realtime = new Realtime(this._client);
+    this.responses = new Responses(this._client);
     this.chatkit = new ChatKit(this._client);
     this.assistants = new Assistants(this._client);
     this.threads = new Threads2(this._client);
   }
 };
 Beta.Realtime = Realtime;
+Beta.Responses = Responses;
 Beta.ChatKit = ChatKit;
 Beta.Assistants = Assistants;
 Beta.Threads = Threads2;
@@ -12642,6 +13633,7 @@ function accumulateResponse(event, snapshot) {
     case "response.mcp_list_tools.in_progress":
     case "response.mcp_list_tools.completed":
     case "response.mcp_list_tools.failed":
+    case "keepalive":
     case "error": {
       break;
     }
@@ -12701,6 +13693,11 @@ var ResponseStream = class _ResponseStream extends EventStream {
     }));
     return runner;
   }
+  static fromReadableStream(stream) {
+    const runner = new _ResponseStream(null);
+    runner._run(() => runner._fromReadableStream(stream));
+    return runner;
+  }
   async _createOrRetrieveResponse(client, params, options) {
     this._listenForAbort(options?.signal);
     __classPrivateFieldGet(this, _ResponseStream_instances, "m", _ResponseStream_beginRequest).call(this);
@@ -12715,6 +13712,19 @@ var ResponseStream = class _ResponseStream extends EventStream {
     this._connected();
     for await (const event of stream) {
       __classPrivateFieldGet(this, _ResponseStream_instances, "m", _ResponseStream_addEvent).call(this, event, starting_after);
+    }
+    if (stream.controller.signal?.aborted) {
+      throw new APIUserAbortError();
+    }
+    return __classPrivateFieldGet(this, _ResponseStream_instances, "m", _ResponseStream_endRequest).call(this);
+  }
+  async _fromReadableStream(readableStream, options) {
+    this._listenForAbort(options?.signal);
+    __classPrivateFieldGet(this, _ResponseStream_instances, "m", _ResponseStream_beginRequest).call(this);
+    this._connected();
+    const stream = Stream.fromReadableStream(readableStream, this.controller);
+    for await (const event of stream) {
+      __classPrivateFieldGet(this, _ResponseStream_instances, "m", _ResponseStream_addEvent).call(this, event, null);
     }
     if (stream.controller.signal?.aborted) {
       throw new APIUserAbortError();
@@ -12853,7 +13863,7 @@ function finalizeResponse(snapshot, params) {
 }
 
 // node_modules/openai/resources/responses/input-items.mjs
-var InputItems = class extends APIResource {
+var InputItems2 = class extends APIResource {
   /**
    * Returns a list of input items for a given response.
    *
@@ -12873,7 +13883,7 @@ var InputItems = class extends APIResource {
 };
 
 // node_modules/openai/resources/responses/input-tokens.mjs
-var InputTokens = class extends APIResource {
+var InputTokens2 = class extends APIResource {
   /**
    * Returns input token counts of the request.
    *
@@ -12895,11 +13905,11 @@ var InputTokens = class extends APIResource {
 };
 
 // node_modules/openai/resources/responses/responses.mjs
-var Responses = class extends APIResource {
+var Responses2 = class extends APIResource {
   constructor() {
     super(...arguments);
-    this.inputItems = new InputItems(this._client);
-    this.inputTokens = new InputTokens(this._client);
+    this.inputItems = new InputItems2(this._client);
+    this.inputTokens = new InputTokens2(this._client);
   }
   create(body, options) {
     return this._client.post("/responses", {
@@ -12982,7 +13992,7 @@ var Responses = class extends APIResource {
    * @example
    * ```ts
    * const compactedResponse = await client.responses.compact({
-   *   model: 'gpt-5.4',
+   *   model: 'gpt-5.6-sol',
    * });
    * ```
    */
@@ -12990,8 +14000,8 @@ var Responses = class extends APIResource {
     return this._client.post("/responses/compact", { body, ...options, __security: { bearerAuth: true } });
   }
 };
-Responses.InputItems = InputItems;
-Responses.InputTokens = InputTokens;
+Responses2.InputItems = InputItems2;
+Responses2.InputTokens = InputTokens2;
 
 // node_modules/openai/resources/skills/content.mjs
 var Content2 = class extends APIResource {
@@ -13789,7 +14799,7 @@ var OpenAI = class {
     this.batches = new Batches(this);
     this.uploads = new Uploads(this);
     this.admin = new Admin(this);
-    this.responses = new Responses(this);
+    this.responses = new Responses2(this);
     this.realtime = new Realtime2(this);
     this.conversations = new Conversations(this);
     this.evals = new Evals(this);
@@ -14040,6 +15050,7 @@ var OpenAI = class {
     const { req, url, timeout } = await this.buildRequest(options, {
       retryCount: maxRetries - retriesRemaining
     });
+    const hasStreamingBody = options.__metadata?.["hasStreamingBody"] === true;
     await this.prepareRequest(req, { url, options });
     await this._provider?.prepareRequest?.(req, { url, options });
     const requestLogID = "log_" + (Math.random() * (1 << 24) | 0).toString(16).padStart(6, "0");
@@ -14065,7 +15076,7 @@ var OpenAI = class {
         throw new APIUserAbortError();
       }
       const isTimeout = isAbortError(response) || /timed? ?out/i.test(String(response) + ("cause" in response ? String(response.cause) : ""));
-      if (retriesRemaining) {
+      if (retriesRemaining && !hasStreamingBody) {
         loggerFor(this).info(`[${requestLogID}] connection ${isTimeout ? "timed out" : "failed"} - ${retryMessage}`);
         loggerFor(this).debug(`[${requestLogID}] connection ${isTimeout ? "timed out" : "failed"} (${retryMessage})`, formatRequestDetails({
           retryOfRequestLogID,
@@ -14075,8 +15086,9 @@ var OpenAI = class {
         }));
         return this.retryRequest(options, retriesRemaining, retryOfRequestLogID ?? requestLogID);
       }
-      loggerFor(this).info(`[${requestLogID}] connection ${isTimeout ? "timed out" : "failed"} - error; no more retries left`);
-      loggerFor(this).debug(`[${requestLogID}] connection ${isTimeout ? "timed out" : "failed"} (error; no more retries left)`, formatRequestDetails({
+      const terminalMessage = hasStreamingBody ? "error; streaming body cannot be retried" : "error; no more retries left";
+      loggerFor(this).info(`[${requestLogID}] connection ${isTimeout ? "timed out" : "failed"} - ${terminalMessage}`);
+      loggerFor(this).debug(`[${requestLogID}] connection ${isTimeout ? "timed out" : "failed"} (${terminalMessage})`, formatRequestDetails({
         retryOfRequestLogID,
         url,
         durationMs: headersTime - startTime,
@@ -14108,7 +15120,7 @@ var OpenAI = class {
         }, retriesRemaining, retryOfRequestLogID ?? requestLogID);
       }
       const shouldRetry = await this.shouldRetry(response);
-      if (retriesRemaining && shouldRetry) {
+      if (retriesRemaining && shouldRetry && !hasStreamingBody) {
         const retryMessage2 = `retrying, ${retriesRemaining} attempts remaining`;
         await CancelReadableStream(response.body);
         loggerFor(this).info(`${responseInfo} - ${retryMessage2}`);
@@ -14121,7 +15133,7 @@ var OpenAI = class {
         }));
         return this.retryRequest(options, retriesRemaining, retryOfRequestLogID ?? requestLogID, response.headers);
       }
-      const retryMessage = shouldRetry ? `error; no more retries left` : `error; not retryable`;
+      const retryMessage = shouldRetry ? hasStreamingBody ? `error; streaming body cannot be retried` : `error; no more retries left` : `error; not retryable`;
       loggerFor(this).info(`${responseInfo} - ${retryMessage}`);
       const errText = await response.text().catch((err2) => castToError(err2).message);
       const errJSON = safeJSON(errText);
@@ -14306,8 +15318,8 @@ var OpenAI = class {
       return { bodyHeaders: void 0, body: void 0, isStreamingBody: false };
     }
     const headers = buildHeaders([rawHeaders]);
-    const isReadableStream = typeof globalThis.ReadableStream !== "undefined" && body instanceof globalThis.ReadableStream;
-    const isRetryableBody = !isReadableStream && (typeof body === "string" || body instanceof ArrayBuffer || ArrayBuffer.isView(body) || typeof globalThis.Blob !== "undefined" && body instanceof globalThis.Blob || body instanceof URLSearchParams || body instanceof FormData);
+    const isReadableStream2 = typeof globalThis.ReadableStream !== "undefined" && body instanceof globalThis.ReadableStream;
+    const isRetryableBody = !isReadableStream2 && (typeof body === "string" || body instanceof ArrayBuffer || ArrayBuffer.isView(body) || typeof globalThis.Blob !== "undefined" && body instanceof globalThis.Blob || body instanceof URLSearchParams || body instanceof FormData);
     if (
       // Pass raw type verbatim
       ArrayBuffer.isView(body) || body instanceof ArrayBuffer || body instanceof DataView || typeof body === "string" && // Preserve legacy string encoding behavior for now
@@ -14315,7 +15327,7 @@ var OpenAI = class {
       globalThis.Blob && body instanceof globalThis.Blob || // `FormData` -> `multipart/form-data`
       body instanceof FormData || // `URLSearchParams` -> `application/x-www-form-urlencoded`
       body instanceof URLSearchParams || // Send chunked stream (each chunk has own `length`)
-      isReadableStream
+      isReadableStream2
     ) {
       return { bodyHeaders: void 0, body, isStreamingBody: !isRetryableBody };
     } else if (typeof body === "object" && (Symbol.asyncIterator in body || Symbol.iterator in body && "next" in body && typeof body.next === "function")) {
@@ -14355,6 +15367,7 @@ OpenAI.PermissionDeniedError = PermissionDeniedError;
 OpenAI.UnprocessableEntityError = UnprocessableEntityError;
 OpenAI.InvalidWebhookSignatureError = InvalidWebhookSignatureError;
 OpenAI.toFile = toFile;
+OpenAI.toStreamingFile = toStreamingFile;
 OpenAI.Completions = Completions2;
 OpenAI.Chat = Chat;
 OpenAI.Embeddings = Embeddings;
@@ -14371,7 +15384,7 @@ OpenAI.Beta = Beta;
 OpenAI.Batches = Batches;
 OpenAI.Uploads = Uploads;
 OpenAI.Admin = Admin;
-OpenAI.Responses = Responses;
+OpenAI.Responses = Responses2;
 OpenAI.Realtime = Realtime2;
 OpenAI.Conversations = Conversations;
 OpenAI.Evals = Evals;
@@ -14399,9 +15412,24 @@ function isUndiciDispatcherVersionMismatchError(error) {
 // src/responsesClient.ts
 var OPENAI_DEFAULT_MAX_RETRIES = 2;
 var OPENAI_DEFAULT_TIMEOUT_MS = 10 * 60 * 1e3;
+var LANGUAGE_MODEL_CHAT_TOOL_MODE_AUTO = 1;
 var LANGUAGE_MODEL_CHAT_TOOL_MODE_REQUIRED = 2;
+var MAX_FUNCTION_TOOL_NAME_LENGTH = 64;
+var ResponsesTransportError = class extends Error {
+  kind;
+  status;
+  code;
+  constructor(kind, message, options = {}) {
+    super(message, options.cause === void 0 ? void 0 : { cause: options.cause });
+    this.name = "ResponsesTransportError";
+    this.kind = kind;
+    this.status = options.status;
+    this.code = options.code ?? void 0;
+  }
+};
 function buildResponsesCreateRequest(options) {
-  const tools = options.tools?.flatMap(convertToolToResponseTool) ?? [];
+  const tools = convertTools(options.tools ?? []);
+  const toolChoice = mapToolChoice(options.toolMode, tools.length);
   return {
     model: options.model,
     instructions: options.instructions,
@@ -14410,14 +15438,29 @@ function buildResponsesCreateRequest(options) {
     store: false,
     ...options.serviceTier ? { service_tier: options.serviceTier } : {},
     ...options.reasoning ? { reasoning: options.reasoning } : {},
-    ...tools.length > 0 ? { tools, tool_choice: mapToolChoice(options.toolMode) } : {},
+    ...tools.length > 0 ? { tools, tool_choice: toolChoice } : {},
     ...options.omitMaxOutputTokens ? {} : { max_output_tokens: options.maxOutputTokens }
   };
 }
 async function streamResponseText(options) {
   const abortController = new AbortController();
-  const cancellation = options.token.onCancellationRequested(() => abortController.abort());
+  let cancellationReported = false;
+  const reportCancellation = () => {
+    if (!cancellationReported) {
+      cancellationReported = true;
+      options.onCancelled?.();
+    }
+  };
+  const cancellation = options.token.onCancellationRequested(() => {
+    abortController.abort();
+    reportCancellation();
+  });
   try {
+    if (options.token.isCancellationRequested) {
+      abortController.abort();
+      reportCancellation();
+      return;
+    }
     if (!options.instructions.trim()) {
       throw new Error("Codex requires non-empty top-level instructions.");
     }
@@ -14434,31 +15477,16 @@ async function streamResponseText(options) {
       maxRetries: OPENAI_DEFAULT_MAX_RETRIES,
       timeout: OPENAI_DEFAULT_TIMEOUT_MS
     });
-    for await (const event of stream) {
-      if (options.token.isCancellationRequested) {
+    await consumeResponseStreamEvents(stream, options, {
+      isCancellationRequested: () => options.token.isCancellationRequested,
+      cancel: () => {
         abortController.abort();
-        return;
+        reportCancellation();
       }
-      if (event.type === "response.output_text.delta") {
-        options.onTextDelta(event.delta);
-      } else if (event.type === "response.reasoning_text.delta") {
-        options.onReasoningTextDelta?.(event.delta);
-      } else if (event.type === "response.output_item.done" && event.item.type === "function_call") {
-        options.onToolCall?.(event.item.call_id, event.item.name, parseToolCallInput(event.item.arguments));
-      } else if (event.type === "response.created") {
-        options.onResponseCreated?.(event.response);
-      } else if (event.type === "response.completed") {
-        options.onResponseCompleted?.(event.response);
-      } else if (event.type === "response.failed") {
-        const message = event.response.error?.message ?? "Responses API request failed.";
-        options.onResponseFailed?.(message);
-        throw new Error(message);
-      } else {
-        options.onUnhandledEvent?.(event.type);
-      }
-    }
+    });
   } catch (error) {
     if (options.token.isCancellationRequested || abortController.signal.aborted) {
+      reportCancellation();
       return;
     }
     throw normalizeResponsesError(error, options.baseURL);
@@ -14466,77 +15494,308 @@ async function streamResponseText(options) {
     cancellation.dispose();
   }
 }
+async function consumeResponseStreamEvents(stream, callbacks, cancellation) {
+  let completed = false;
+  for await (const event of stream) {
+    if (cancellation.isCancellationRequested()) {
+      cancellation.cancel();
+      return;
+    }
+    if (handleResponseStreamEvent(event, callbacks) === "completed") {
+      completed = true;
+    }
+  }
+  if (!completed && !cancellation.isCancellationRequested()) {
+    throw new ResponsesTransportError("malformed", "Responses API stream ended without a terminal event.");
+  }
+}
+function handleResponseStreamEvent(event, callbacks) {
+  switch (event.type) {
+    case "response.output_text.delta":
+      callbacks.onTextDelta(event.delta);
+      return "continue";
+    case "response.reasoning_summary_text.delta":
+      (callbacks.onReasoningSummaryDelta ?? callbacks.onReasoningTextDelta)?.(event.delta);
+      return "continue";
+    case "response.reasoning_text.delta":
+      callbacks.onReasoningTextDelta?.(event.delta);
+      return "continue";
+    case "response.refusal.delta":
+      (callbacks.onRefusalDelta ?? callbacks.onTextDelta)(event.delta);
+      return "continue";
+    case "response.output_item.done":
+      if (event.item.type === "function_call") {
+        callbacks.onToolCall?.(event.item.call_id, event.item.name, parseToolCallInput(event.item.arguments));
+      }
+      return "continue";
+    case "response.created":
+      callbacks.onResponseCreated?.(event.response);
+      return "continue";
+    case "response.completed":
+      callbacks.onResponseCompleted?.(event.response);
+      return "completed";
+    case "response.failed": {
+      const message = event.response.error?.message ?? "Responses API request failed.";
+      const code = event.response.error?.code;
+      callbacks.onResponseFailed?.(message);
+      throw new ResponsesTransportError(classifyErrorDetails(void 0, code, message), message, {
+        code,
+        cause: event
+      });
+    }
+    case "response.incomplete": {
+      const reason = event.response.incomplete_details?.reason;
+      const message = `Responses API request was incomplete${reason ? `: ${reason}` : ""}.`;
+      callbacks.onResponseIncomplete?.(message, event.response);
+      throw new ResponsesTransportError("incomplete", message, { cause: event });
+    }
+    case "error":
+      callbacks.onResponseError?.(event.message, event.code, event.param);
+      throw new ResponsesTransportError(classifyErrorDetails(void 0, event.code ?? void 0, event.message), event.message, {
+        code: event.code,
+        cause: event
+      });
+    case "response.output_text.done":
+    case "response.reasoning_summary_text.done":
+    case "response.reasoning_text.done":
+    case "response.refusal.done":
+    case "response.function_call_arguments.delta":
+    case "response.function_call_arguments.done":
+      return "continue";
+    default:
+      callbacks.onUnhandledEvent?.(event.type);
+      return "continue";
+  }
+}
 async function countInputTokens(options) {
-  const response = await fetch(`${normalizeBaseURL(options.baseURL)}/responses/input_tokens`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${options.apiKey}`,
-      ...options.headers
-    },
-    body: JSON.stringify({ model: options.model, input: options.input }),
-    signal: toAbortSignal2(options.token)
+  const endpoint = `${normalizeBaseURL(options.baseURL)}/responses/input_tokens`;
+  const cancellation = bindCancellationToken2(options.token);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${options.apiKey}`,
+        ...options.headers
+      },
+      body: JSON.stringify({ model: options.model, input: options.input }),
+      signal: cancellation.signal
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw createHttpError(response.status, response.statusText, body, endpoint);
+    }
+    const payload = await response.json();
+    if (typeof payload.input_tokens !== "number" || !Number.isFinite(payload.input_tokens) || payload.input_tokens < 0) {
+      throw new ResponsesTransportError("malformed", "Responses input token count returned an invalid input_tokens value.");
+    }
+    return Math.floor(payload.input_tokens);
+  } catch (error) {
+    if (options.token.isCancellationRequested) {
+      throw error;
+    }
+    throw normalizeResponsesError(error, options.baseURL, "/responses/input_tokens");
+  } finally {
+    cancellation.dispose();
+  }
+}
+function convertTools(tools) {
+  const names = /* @__PURE__ */ new Set();
+  return tools.map((tool) => {
+    if (names.has(tool.name)) {
+      throw new Error(`Duplicate language model tool name "${tool.name}".`);
+    }
+    names.add(tool.name);
+    return convertToolToResponseTool(tool);
   });
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`Responses input token count failed with ${response.status} ${response.statusText}.${body ? ` ${body}` : ""}`);
-  }
-  const payload = await response.json();
-  if (typeof payload.input_tokens !== "number" || !Number.isFinite(payload.input_tokens) || payload.input_tokens < 0) {
-    throw new Error("Responses input token count returned an invalid input_tokens value.");
-  }
-  return Math.floor(payload.input_tokens);
 }
 function convertToolToResponseTool(tool) {
   if (!isValidFunctionToolName(tool.name)) {
-    return [];
+    throw new Error(`Invalid language model tool name "${tool.name}". Tool names must contain 1-${MAX_FUNCTION_TOOL_NAME_LENGTH} letters, digits, underscores, or dashes.`);
   }
-  return [{
+  if (tool.inputSchema !== void 0 && tool.inputSchema !== null && !isObjectRecord(tool.inputSchema)) {
+    throw new Error(`Invalid input schema for language model tool "${tool.name}": the schema must be a JSON object.`);
+  }
+  if (isObjectRecord(tool.inputSchema)) {
+    assertJsonValue(tool.inputSchema, `input schema for language model tool "${tool.name}"`);
+  }
+  return {
     type: "function",
     name: tool.name,
     description: tool.description,
     parameters: isObjectRecord(tool.inputSchema) ? tool.inputSchema : null,
     strict: false
-  }];
+  };
 }
 function isValidFunctionToolName(name) {
-  return /^[A-Za-z0-9_-]+$/.test(name);
+  return name.length <= MAX_FUNCTION_TOOL_NAME_LENGTH && /^[A-Za-z0-9_-]+$/.test(name);
 }
 function isObjectRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function mapToolChoice(toolMode) {
-  return toolMode === LANGUAGE_MODEL_CHAT_TOOL_MODE_REQUIRED ? "required" : "auto";
+function mapToolChoice(toolMode, toolCount) {
+  if (toolMode === LANGUAGE_MODEL_CHAT_TOOL_MODE_REQUIRED && toolCount === 0) {
+    throw new Error("Language model tool mode Required requires at least one tool.");
+  }
+  if (toolMode === void 0 || toolMode === LANGUAGE_MODEL_CHAT_TOOL_MODE_AUTO) {
+    return "auto";
+  }
+  if (toolMode === LANGUAGE_MODEL_CHAT_TOOL_MODE_REQUIRED) {
+    return "required";
+  }
+  throw new Error(`Unsupported language model tool mode: ${String(toolMode)}.`);
 }
 function parseToolCallInput(argumentsJson) {
   if (!argumentsJson.trim()) {
-    return {};
+    throw new ResponsesTransportError("malformed", "Responses API returned empty function-call arguments; expected a JSON object.");
   }
   try {
     const parsed = JSON.parse(argumentsJson);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { value: parsed };
-  } catch {
-    return { _raw: argumentsJson };
+    if (!isObjectRecord(parsed)) {
+      throw new Error("tool arguments must decode to a JSON object");
+    }
+    return parsed;
+  } catch (error) {
+    throw new ResponsesTransportError("malformed", "Responses API returned malformed function-call arguments.", {
+      cause: error
+    });
   }
 }
-function normalizeResponsesError(error, baseURL) {
-  const endpoint = `${normalizeBaseURL(baseURL)}/responses`;
+function classifyResponsesError(error) {
+  if (error instanceof ResponsesTransportError) {
+    return error.kind;
+  }
+  if (error instanceof APIConnectionError || getErrorName(error) === "AbortError") {
+    return "transport";
+  }
+  const status = getErrorStatus(error);
+  const code = getErrorCode(error);
+  const message = getErrorMessage(error);
+  return classifyErrorDetails(status, code, message);
+}
+function normalizeResponsesError(error, baseURL, resourcePath = "/responses") {
+  if (error instanceof ResponsesTransportError) {
+    return error;
+  }
+  const endpoint = `${normalizeBaseURL(baseURL)}${resourcePath}`;
   if (error instanceof APIConnectionTimeoutError) {
-    return new Error(`OpenAI request timed out while contacting ${endpoint}.`, { cause: error });
+    return new ResponsesTransportError("transport", `OpenAI request timed out while contacting ${endpoint}.`, { cause: error });
   }
   if (error instanceof APIConnectionError) {
-    return new Error(`Connection failure while contacting ${endpoint}. ${getCauseMessage(error) ?? ""}`.trim(), { cause: error });
+    return new ResponsesTransportError("transport", `Connection failure while contacting ${endpoint}. ${getCauseMessage(error) ?? ""}`.trim(), { cause: error });
   }
   if (error instanceof AuthenticationError) {
-    return new Error(`Responses API authentication failed. Check the stored API key or ~/.codex/auth.json credentials. ${error.message}`, { cause: error });
+    return new ResponsesTransportError("noPermissions", `Responses API authentication failed. Check the stored API key or ~/.codex/auth.json credentials. ${error.message}`, {
+      cause: error,
+      status: error.status,
+      code: error.code
+    });
   }
   if (error instanceof RateLimitError) {
-    return new Error(`OpenAI rate limit exceeded while contacting ${endpoint}. ${error.message}`, { cause: error });
+    return new ResponsesTransportError("blocked", `OpenAI rate limit or quota exceeded while contacting ${endpoint}. ${error.message}`, {
+      cause: error,
+      status: error.status,
+      code: error.code
+    });
   }
   if (error instanceof InternalServerError || error instanceof APIError) {
-    return new Error(`OpenAI request failed while contacting ${endpoint}. ${error.message}`, { cause: error });
+    return new ResponsesTransportError(classifyResponsesError(error), `OpenAI request failed while contacting ${endpoint}. ${error.message}`, {
+      cause: error,
+      status: error.status,
+      code: error.code
+    });
   }
   return error instanceof Error ? error : new Error(String(error));
+}
+function classifyErrorDetails(status, code, message) {
+  const normalizedCode = code?.trim().toLowerCase();
+  if (status === 401 || status === 403 || normalizedCode !== void 0 && [
+    "invalid_api_key",
+    "authentication_error",
+    "permission_denied",
+    "insufficient_permissions",
+    "unauthorized",
+    "forbidden"
+  ].includes(normalizedCode)) {
+    return "noPermissions";
+  }
+  if (status === 429 || normalizedCode !== void 0 && [
+    "rate_limit_exceeded",
+    "insufficient_quota",
+    "quota_exceeded",
+    "billing_hard_limit_reached",
+    "usage_limit_reached"
+  ].includes(normalizedCode)) {
+    return "blocked";
+  }
+  if (status === 404 && isModelSpecificError(code, message)) {
+    return "notFound";
+  }
+  if (status !== void 0 && status >= 500) {
+    return "server";
+  }
+  return "failed";
+}
+function isModelSpecificError(code, message) {
+  return code === "model_not_found" || code === "model_not_available" || /\bmodel\b[^.\n]*(not found|does not exist|unavailable|not available)/i.test(message);
+}
+function createHttpError(status, statusText, body, endpoint) {
+  const details = readHttpErrorDetails(body);
+  const suffix = body ? ` ${body}` : "";
+  return new ResponsesTransportError(
+    classifyErrorDetails(status, details.code, details.message || body),
+    `Responses request to ${endpoint} failed with ${status} ${statusText}.${suffix}`,
+    { status, code: details.code }
+  );
+}
+function readHttpErrorDetails(body) {
+  try {
+    const payload = JSON.parse(body);
+    if (isObjectRecord(payload)) {
+      const nested = isObjectRecord(payload.error) ? payload.error : payload;
+      return {
+        code: typeof nested.code === "string" ? nested.code : void 0,
+        message: typeof nested.message === "string" ? nested.message : ""
+      };
+    }
+  } catch {
+  }
+  return { message: "" };
+}
+function assertJsonValue(value, label, ancestors = /* @__PURE__ */ new Set()) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error(`Invalid ${label}: numbers must be finite.`);
+    }
+    return;
+  }
+  if (typeof value !== "object") {
+    throw new Error(`Invalid ${label}: values must be JSON-serializable.`);
+  }
+  if (ancestors.has(value)) {
+    throw new Error(`Invalid ${label}: cyclic values are not supported.`);
+  }
+  ancestors.add(value);
+  const entries = Array.isArray(value) ? value.entries() : Object.entries(value);
+  for (const [, child] of entries) {
+    assertJsonValue(child, label, ancestors);
+  }
+  ancestors.delete(value);
+}
+function getErrorStatus(error) {
+  return isObjectRecord(error) && typeof error.status === "number" ? error.status : void 0;
+}
+function getErrorCode(error) {
+  return isObjectRecord(error) && typeof error.code === "string" ? error.code : void 0;
+}
+function getErrorMessage(error) {
+  return error instanceof Error ? error.message : isObjectRecord(error) && typeof error.message === "string" ? error.message : String(error);
+}
+function getErrorName(error) {
+  return isObjectRecord(error) && typeof error.name === "string" ? error.name : void 0;
 }
 function getCauseMessage(error) {
   if (error.cause instanceof Error && error.cause.message.trim()) {
@@ -14544,15 +15803,14 @@ function getCauseMessage(error) {
   }
   return typeof error.cause === "string" && error.cause.trim() ? error.cause.trim() : void 0;
 }
-function toAbortSignal2(token) {
-  if (token.isCancellationRequested) {
-    const controller2 = new AbortController();
-    controller2.abort();
-    return controller2.signal;
-  }
+function bindCancellationToken2(token) {
   const controller = new AbortController();
-  token.onCancellationRequested(() => controller.abort());
-  return controller.signal;
+  if (token.isCancellationRequested) {
+    controller.abort();
+    return { signal: controller.signal, dispose: () => void 0 };
+  }
+  const cancellation = token.onCancellationRequested(() => controller.abort());
+  return { signal: controller.signal, dispose: () => cancellation.dispose() };
 }
 
 // src/secrets.ts
@@ -14564,7 +15822,7 @@ var LEGACY_API_KEY_SECRET = "pionus.codex.apiKey";
 var CHATGPT_API_KEY_SECRET = "pionus.credentials.chatgpt";
 var OPENAI_API_KEY_SECRET = "pionus.credentials.openai";
 var CUSTOM_API_KEY_PREFIX = "pionus.credentials.endpoint.";
-var DEFAULT_USER_AGENT = "pionus.openai-language-model-provider/0.0.2 VSCode-Extension";
+var DEFAULT_USER_AGENT = "pionus.openai-language-model-provider/0.1.0 VSCode-Extension";
 function classifyCredentialTarget(baseURL) {
   const normalized = normalizeBaseURL(baseURL);
   let url;
@@ -14849,7 +16107,7 @@ async function readAgentProfile(filePath, outputChannel) {
       description: getString3(parsed.description) ?? `Mirrored Codex agent from ${filePath}`,
       instructions,
       model: getString3(parsed.model),
-      reasoningEffort: normalizeReasoningEffort3(parsed.model_reasoning_effort),
+      reasoningEffort: normalizeReasoningEffort4(parsed.model_reasoning_effort),
       sandboxMode: getString3(parsed.sandbox_mode),
       source: "codexAgent"
     };
@@ -14870,7 +16128,7 @@ function slugify(value) {
 function getString3(value) {
   return typeof value === "string" && value.trim() ? value.trim() : void 0;
 }
-function normalizeReasoningEffort3(value) {
+function normalizeReasoningEffort4(value) {
   switch (value) {
     case "none":
     case "minimal":
@@ -15031,18 +16289,23 @@ var CodexModelProvider = class {
       this.modelInfoChangedEmitter,
       vscode5.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration(getConfigurationSection())) {
-          this.cachedModels = void 0;
-          this.modelInfoChangedEmitter.fire();
+          this.refreshModels();
         }
-      })
+      }),
+      this.context.secrets.onDidChange(() => this.refreshModels())
     );
   }
   onDidChangeLanguageModelChatInformation;
   modelInfoChangedEmitter = new vscode5.EventEmitter();
   cachedModels;
+  refreshModels() {
+    this.cachedModels = void 0;
+    this.modelInfoChangedEmitter.fire();
+  }
   async provideLanguageModelChatInformation(options, token) {
     const config = getProviderConfig();
     const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
+    throwIfCancellationRequested(token);
     this.outputChannel.debug("provideLanguageModelChatInformation start", {
       silent: options.silent,
       baseURL: normalizeBaseURL(config.baseURL),
@@ -15060,21 +16323,53 @@ var CodexModelProvider = class {
   async provideLanguageModelChatResponse(model, messages, options, progress, token) {
     const config = getProviderConfig();
     const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
-    if (!credentials) {
-      throw new Error('Codex credentials are missing. Run "Pionus Codex: Set API Key" or configure ~/.codex/auth.json.');
+    if (token.isCancellationRequested) {
+      return;
     }
-    const parsedModel = parseModelIdentifier(model.id || config.model);
-    const reasoningEffort = getReasoningEffort(parsedModel.reasoningEffort, options, config.defaultReasoningEffort);
+    if (!credentials) {
+      throw vscode5.LanguageModelError.NoPermissions('Codex credentials are missing. Run "Pionus Codex: Set API Key" or configure ~/.codex/auth.json.');
+    }
+    const target = classifyCredentialTarget(config.baseURL).kind;
+    const selectedModel = parseModelIdentifier(model.id || config.model);
     const agentProfile = await resolveAgentProfile(config, { hasTools: Boolean(options.tools?.length), outputChannel: this.outputChannel });
+    if (token.isCancellationRequested) {
+      return;
+    }
+    const profileModel = agentProfile?.model ? parseModelIdentifier(agentProfile.model) : void 0;
+    const requestModel = profileModel?.requestModel ?? selectedModel.requestModel;
+    const serviceTier = profileModel?.serviceTier ?? selectedModel.serviceTier;
+    const metadata = this.resolveRequestModelMetadata(requestModel, target, config);
+    if (!metadata || !metadata.streaming) {
+      throw vscode5.LanguageModelError.NotFound(`The effective model "${requestModel}" is not available as a streaming language model for this endpoint.`);
+    }
+    if (options.tools?.length && !metadata.toolCalling) {
+      throw new Error(`The effective model "${requestModel}" does not support function tools.`);
+    }
+    const reasoningEffort = ensureSupportedReasoningEffort(resolveReasoningEffort({
+      runtimeOptions: options,
+      selectedVariant: profileModel?.reasoningEffort ?? selectedModel.reasoningEffort,
+      agentProfile: agentProfile?.reasoningEffort,
+      globalDefault: config.defaultReasoningEffort,
+      modelDefault: metadata.defaultReasoningEffort
+    }), {
+      model: requestModel,
+      known: metadata.reasoningEffortsKnown,
+      supported: metadata.supportedReasoningEfforts
+    });
+    const maxOutputTokens = clampOutputTokens(config.maxOutputTokens, metadata.maxOutputTokens);
+    const enableImageInput = config.enableImageInput && metadata.imageInput;
     const skillInstructions = await buildActiveSkillInstructions(this.context, config, this.outputChannel);
     const ideContext = config.includeIdeContext ? formatContextSnapshot(collectContextSnapshot(config)) : void 0;
     const instructions = await buildInstructions(config, agentProfile, { ideContext, skillInstructions });
-    const input = convertMessagesToResponsesInput(messages, false);
+    if (token.isCancellationRequested) {
+      return;
+    }
+    const input = convertMessagesToResponsesInput(messages, enableImageInput);
     const requestStartedAt = Date.now();
     const requestLogContext = {
       modelId: model.id,
-      requestModel: parsedModel.requestModel,
-      serviceTier: parsedModel.serviceTier ?? "normal",
+      requestModel,
+      serviceTier: serviceTier ?? "normal",
       reasoningEffort: reasoningEffort ?? null,
       agentProfile: agentProfile?.id ?? null,
       toolCount: options.tools?.length ?? 0,
@@ -15095,7 +16390,10 @@ var CodexModelProvider = class {
       messageCount: messages.length,
       inputItemCount: input.length,
       toolMode: options.toolMode ?? null,
-      omitMaxOutputTokens: credentials.omitMaxOutputTokens
+      omitMaxOutputTokens: credentials.omitMaxOutputTokens,
+      imageInputEnabled: enableImageInput,
+      modelMaxOutputTokens: metadata.maxOutputTokens,
+      requestMaxOutputTokens: maxOutputTokens
     });
     try {
       await streamResponseText({
@@ -15103,14 +16401,14 @@ var CodexModelProvider = class {
         apiKey: credentials.apiKey,
         headers: credentials.headers,
         omitMaxOutputTokens: credentials.omitMaxOutputTokens,
-        model: agentProfile?.model ?? parsedModel.requestModel,
+        model: requestModel,
         instructions,
-        serviceTier: getRequestServiceTier(parsedModel.serviceTier),
+        serviceTier: getRequestServiceTier(serviceTier),
         input,
         tools: options.tools,
         toolMode: options.toolMode,
-        reasoning: reasoningEffort ? { effort: reasoningEffort } : agentProfile?.reasoningEffort ? { effort: agentProfile.reasoningEffort } : void 0,
-        maxOutputTokens: config.maxOutputTokens,
+        reasoning: reasoningEffort ? { effort: reasoningEffort } : void 0,
+        maxOutputTokens,
         token,
         onTextDelta: (text) => {
           streamLogState.textDeltaCount += 1;
@@ -15119,13 +16417,16 @@ var CodexModelProvider = class {
           progress.report(new vscode5.LanguageModelTextPart(text));
         },
         onReasoningTextDelta: (text) => {
-          streamLogState.reasoningDeltaCount += 1;
-          streamLogState.reasoningCharCount += text.length;
+          reportReasoningDelta(text, streamLogState, progress);
+        },
+        onReasoningSummaryDelta: (text) => {
+          reportReasoningDelta(text, streamLogState, progress);
+        },
+        onRefusalDelta: (text) => {
+          streamLogState.textDeltaCount += 1;
+          streamLogState.textCharCount += text.length;
           streamLogState.lastEventAt = Date.now();
-          const thinkingPart = createThinkingPart(text);
-          if (thinkingPart) {
-            progress.report(thinkingPart);
-          }
+          progress.report(new vscode5.LanguageModelTextPart(text));
         },
         onToolCall: (callId, name, input2) => {
           streamLogState.toolCallCount += 1;
@@ -15164,7 +16465,7 @@ var CodexModelProvider = class {
             progress.report(usagePart);
           }
           if (response.usage) {
-            this.usageSink?.record({ model: parsedModel.requestModel, usage: response.usage, completedAt: Date.now() });
+            this.usageSink?.record({ model: requestModel, usage: response.usage, completedAt: Date.now() });
           }
         },
         onResponseFailed: (message) => {
@@ -15173,6 +16474,28 @@ var CodexModelProvider = class {
             ...toLogPayload(requestLogContext, streamLogState),
             message
           });
+        },
+        onResponseIncomplete: (message, response) => {
+          streamLogState.lastEventAt = Date.now();
+          streamLogState.responseId = response.id ?? streamLogState.responseId;
+          this.outputChannel.error("response incomplete event", {
+            ...toLogPayload(requestLogContext, streamLogState),
+            message,
+            incompleteDetails: response.incomplete_details ?? null
+          });
+        },
+        onResponseError: (message, code, param) => {
+          streamLogState.lastEventAt = Date.now();
+          this.outputChannel.error("response error event", {
+            ...toLogPayload(requestLogContext, streamLogState),
+            message,
+            code: code ?? null,
+            param: param ?? null
+          });
+        },
+        onCancelled: () => {
+          streamLogState.lastEventAt = Date.now();
+          this.outputChannel.warn("response cancelled", toLogPayload(requestLogContext, streamLogState));
         },
         onUnhandledEvent: (eventType) => {
           streamLogState.lastEventAt = Date.now();
@@ -15191,7 +16514,10 @@ var CodexModelProvider = class {
         ...toLogPayload(requestLogContext, streamLogState),
         error: describeError(error)
       });
-      throw error;
+      if (token.isCancellationRequested) {
+        return;
+      }
+      throw toLanguageModelError(error);
     }
     if (token.isCancellationRequested) {
       this.outputChannel.warn("response cancelled", toLogPayload(requestLogContext, streamLogState));
@@ -15201,13 +16527,22 @@ var CodexModelProvider = class {
   }
   async provideTokenCount(model, text, token) {
     const config = getProviderConfig();
+    throwIfCancellationRequested(token);
+    const target = classifyCredentialTarget(config.baseURL).kind;
+    const parsedModel = parseModelIdentifier(model.id || config.model);
+    const metadata = this.resolveRequestModelMetadata(parsedModel.requestModel, target, config);
+    if (!metadata || !metadata.streaming) {
+      throw vscode5.LanguageModelError.NotFound(`The model "${parsedModel.requestModel}" is not available for token counting.`);
+    }
+    const enableImageInput = config.enableImageInput && metadata.imageInput;
+    const input = typeof text === "string" ? text : convertMessagesToResponsesInput([text], enableImageInput);
+    const fallbackTokenCount = estimateConvertedTokenCount(text, input);
     const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
-    if (!credentials || !supportsOfficialTokenCounting(config.baseURL)) {
-      return estimateTokenCount(text);
+    throwIfCancellationRequested(token);
+    if (!credentials || target === "chatgpt") {
+      return fallbackTokenCount;
     }
     try {
-      const parsedModel = parseModelIdentifier(model.id || config.model);
-      const input = typeof text === "string" ? text : convertMessagesToResponsesInput([text], false);
       return await countInputTokens({
         baseURL: config.baseURL,
         apiKey: credentials.apiKey,
@@ -15216,8 +16551,14 @@ var CodexModelProvider = class {
         input,
         token
       });
-    } catch {
-      return estimateTokenCount(text);
+    } catch (error) {
+      throwIfCancellationRequested(token);
+      this.outputChannel.debug("Exact Responses input-token count unavailable; using local estimate", {
+        model: parsedModel.requestModel,
+        target,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return fallbackTokenCount;
     }
   }
   async showStatus() {
@@ -15231,19 +16572,27 @@ var CodexModelProvider = class {
     ].join(" | "));
   }
   async getAvailableModels(config, credentials, token) {
-    const cacheKey = [config.baseURL, config.clientVersion, config.model, config.defaultReasoningEffort, credentials.source].join("|");
+    throwIfCancellationRequested(token);
+    const target = classifyCredentialTarget(config.baseURL).kind;
+    const cacheKey = [target, config.baseURL, config.clientVersion, config.model, config.defaultReasoningEffort, config.maxOutputTokens, credentials.source].join("|");
     if (this.cachedModels && this.cachedModels.key === cacheKey && this.cachedModels.expiresAt > Date.now()) {
       return this.cachedModels.models;
     }
     let models;
     try {
-      models = buildProviderModels(config, await fetchAvailableModels(config, credentials, token));
+      models = buildProviderModels(config, await fetchAvailableModels(config, credentials, token, target), target);
     } catch (error) {
+      throwIfCancellationRequested(token);
       this.outputChannel.warn("getAvailableModels discovery failed, using fallback model", { error: error instanceof Error ? error.message : String(error) });
-      models = buildFallbackModels(config);
+      models = buildFallbackModels(config, target);
     }
-    this.cachedModels = { key: cacheKey, expiresAt: Date.now() + 6e4, models };
+    throwIfCancellationRequested(token);
+    this.cachedModels = { key: cacheKey, target, expiresAt: Date.now() + 6e4, models };
     return models;
+  }
+  resolveRequestModelMetadata(requestModel, target, config) {
+    const cached = this.cachedModels?.target === target ? this.cachedModels.models.find((model) => model.requestModel === requestModel)?.metadata : void 0;
+    return cached ?? resolveModelMetadata(requestModel, target, config);
   }
   async promptForCredentials() {
     const action = await vscode5.window.showWarningMessage("Pionus Codex needs Codex credentials. Set an API key or add credentials to ~/.codex/auth.json.", "Set API Key", "Open Settings");
@@ -15257,15 +16606,49 @@ var CodexModelProvider = class {
 function getRequestServiceTier(serviceTier) {
   return serviceTier === "fast" ? "priority" : void 0;
 }
-function getReasoningEffort(selectedReasoningEffort, options, defaultReasoningEffort) {
-  return normalizeReasoningEffort(options.modelConfiguration?.reasoningEffort ?? options.configuration?.reasoningEffort) ?? normalizeReasoningEffort(options.modelOptions?.reasoningEffort) ?? normalizeReasoningEffort(options.modelOptions?.reasoning?.effort) ?? defaultReasoningEffort ?? selectedReasoningEffort;
-}
-function supportsOfficialTokenCounting(baseURL) {
-  return !normalizeBaseURL(baseURL).toLowerCase().includes("chatgpt.com/backend-api/codex");
-}
 function createThinkingPart(text) {
   const ThinkingPart = vscode5.LanguageModelThinkingPart;
   return typeof ThinkingPart === "function" ? new ThinkingPart(text) : void 0;
+}
+function reportReasoningDelta(text, state, progress) {
+  state.reasoningDeltaCount += 1;
+  state.reasoningCharCount += text.length;
+  state.lastEventAt = Date.now();
+  const thinkingPart = createThinkingPart(text);
+  if (thinkingPart) {
+    progress.report(thinkingPart);
+  }
+}
+function estimateConvertedTokenCount(original, converted) {
+  if (typeof original === "string") {
+    return estimateTokenCount(original);
+  }
+  const serialized = JSON.stringify(converted);
+  return serialized === "[]" ? 0 : Math.max(1, Math.ceil(serialized.length / 4));
+}
+function throwIfCancellationRequested(token) {
+  if (token.isCancellationRequested) {
+    throw new vscode5.CancellationError();
+  }
+}
+function toLanguageModelError(error) {
+  if (!(error instanceof ResponsesTransportError)) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+  switch (error.kind) {
+    case "noPermissions":
+      return vscode5.LanguageModelError.NoPermissions(error.message);
+    case "notFound":
+      return vscode5.LanguageModelError.NotFound(error.message);
+    case "blocked":
+      return vscode5.LanguageModelError.Blocked(error.message);
+    case "transport":
+    case "server":
+    case "failed":
+    case "incomplete":
+    case "malformed":
+      return new Error(error.message, { cause: error });
+  }
 }
 function createUsageDataPart(usage) {
   if (!usage) {
@@ -15337,31 +16720,170 @@ function safeJsonStringify2(value) {
 
 // src/usageStatus.ts
 var vscode6 = __toESM(require("vscode"));
+
+// src/usage.ts
+var TOKENS_PER_MILLION = 1e6;
+function validateModelPricingUsdPerMTok(value) {
+  const pricing = /* @__PURE__ */ Object.create(null);
+  const diagnostics = [];
+  if (!isRecord2(value)) {
+    return {
+      pricing,
+      diagnostics: [{ message: "Pricing configuration must be an object keyed by model ID; ignoring it." }]
+    };
+  }
+  for (const [model, candidate] of Object.entries(value)) {
+    if (!model.trim() || model !== model.trim()) {
+      diagnostics.push({ model, message: "Model ID must be non-empty and must not have surrounding whitespace; ignoring this entry." });
+      continue;
+    }
+    if (!isRecord2(candidate)) {
+      diagnostics.push({ model, message: "Pricing entry must be an object; ignoring this entry." });
+      continue;
+    }
+    const unsupportedFields = Object.keys(candidate).filter((field) => !["input", "cachedInput", "output"].includes(field));
+    if (unsupportedFields.length > 0) {
+      diagnostics.push({
+        model,
+        message: `Unsupported pricing fields ${unsupportedFields.join(", ")}; ignoring this entry.`
+      });
+      continue;
+    }
+    const input = readRate(candidate.input);
+    const output = readRate(candidate.output);
+    const cachedInput = candidate.cachedInput === void 0 ? input : readRate(candidate.cachedInput);
+    const invalidFields = [
+      input === void 0 ? "input" : void 0,
+      cachedInput === void 0 ? "cachedInput" : void 0,
+      output === void 0 ? "output" : void 0
+    ].filter((field) => field !== void 0);
+    if (input === void 0 || cachedInput === void 0 || output === void 0) {
+      diagnostics.push({
+        model,
+        message: `Pricing fields ${invalidFields.join(", ")} must be finite, non-negative numbers; ignoring this entry.`
+      });
+      continue;
+    }
+    pricing[model] = { input, cachedInput, output };
+  }
+  return { pricing, diagnostics };
+}
+function getUsageBreakdown(usage) {
+  const inputTokens = normalizeTokenCount(usage.input_tokens);
+  const outputTokens = normalizeTokenCount(usage.output_tokens);
+  const cachedInputTokens = Math.min(inputTokens, normalizeTokenCount(usage.input_tokens_details?.cached_tokens));
+  return {
+    inputTokens,
+    cachedInputTokens,
+    uncachedInputTokens: inputTokens - cachedInputTokens,
+    outputTokens,
+    totalTokens: normalizeTokenCount(usage.total_tokens, inputTokens + outputTokens)
+  };
+}
+function calculateUsageCostUsd(model, usage, pricing) {
+  const rates = pricing[model];
+  if (!rates) {
+    return void 0;
+  }
+  const tokens = getUsageBreakdown(usage);
+  const uncachedInput = tokens.uncachedInputTokens * rates.input / TOKENS_PER_MILLION;
+  const cachedInput = tokens.cachedInputTokens * rates.cachedInput / TOKENS_PER_MILLION;
+  const output = tokens.outputTokens * rates.output / TOKENS_PER_MILLION;
+  return {
+    uncachedInput,
+    cachedInput,
+    output,
+    total: uncachedInput + cachedInput + output
+  };
+}
+function formatUsageTokens(usage) {
+  const tokens = getUsageBreakdown(usage);
+  return `input ${tokens.inputTokens}, output ${tokens.outputTokens}, total ${tokens.totalTokens}`;
+}
+function formatUsd(value) {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError("USD value must be finite and non-negative.");
+  }
+  if (value === 0) {
+    return "$0.00";
+  }
+  if (value < 1e-6) {
+    return "<$0.000001";
+  }
+  if (value < 0.01) {
+    return `$${value.toFixed(6)}`;
+  }
+  if (value < 1) {
+    return `$${value.toFixed(4)}`;
+  }
+  return `$${value.toFixed(2)}`;
+}
+function normalizeTokenCount(value, fallback = 0) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+}
+function readRate(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : void 0;
+}
+function isRecord2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// src/usageStatus.ts
 var UsageStatusBar = class {
-  constructor(context) {
-    this.context = context;
+  constructor(context, configuration, reportDiagnostic) {
+    this.reportDiagnostic = reportDiagnostic;
     this.statusBar = vscode6.window.createStatusBarItem(vscode6.StatusBarAlignment.Right, 88);
     this.statusBar.command = "pionus.codex.showLastUsage";
     context.subscriptions.push(this.statusBar);
+    if (configuration) {
+      this.updateConfiguration({
+        showInStatusBar: configuration.showInStatusBar ?? true,
+        modelPricingUsdPerMTok: configuration.modelPricingUsdPerMTok ?? {}
+      });
+    }
   }
   statusBar;
   lastUsage;
+  showInStatusBar = true;
+  pricing = {};
   record(event) {
     this.lastUsage = event;
-    this.statusBar.text = `Codex ${event.usage.total_tokens ?? 0} tokens`;
-    this.statusBar.tooltip = `Pionus Codex usage for ${event.model}`;
-    this.statusBar.show();
+    this.render();
+  }
+  updateConfiguration(configuration) {
+    this.showInStatusBar = configuration.showInStatusBar;
+    const validated = validateModelPricingUsdPerMTok(configuration.modelPricingUsdPerMTok);
+    this.pricing = validated.pricing;
+    for (const diagnostic of validated.diagnostics) {
+      this.reportDiagnostic?.(diagnostic);
+    }
+    this.render();
+    return validated.diagnostics;
   }
   async showLastUsage() {
     if (!this.lastUsage) {
       await vscode6.window.showInformationMessage("No Codex usage recorded yet.");
       return;
     }
-    const usage = this.lastUsage.usage;
-    await vscode6.window.showInformationMessage(`Codex usage: input ${usage.input_tokens ?? 0}, output ${usage.output_tokens ?? 0}, total ${usage.total_tokens ?? 0}.`);
+    const cost = calculateUsageCostUsd(this.lastUsage.model, this.lastUsage.usage, this.pricing);
+    const costText = cost ? ` Estimated cost: ${formatUsd(cost.total)}.` : "";
+    await vscode6.window.showInformationMessage(`Codex usage: ${formatUsageTokens(this.lastUsage.usage)}.${costText}`);
   }
   dispose() {
     this.statusBar.dispose();
+  }
+  render() {
+    if (!this.lastUsage || !this.showInStatusBar) {
+      this.statusBar.hide();
+      return;
+    }
+    const tokens = getUsageBreakdown(this.lastUsage.usage);
+    const cost = calculateUsageCostUsd(this.lastUsage.model, this.lastUsage.usage, this.pricing);
+    this.statusBar.text = `Codex ${tokens.totalTokens} tokens`;
+    this.statusBar.tooltip = cost ? `Pionus Codex usage for ${this.lastUsage.model}
+${formatUsageTokens(this.lastUsage.usage)}
+Estimated cost: ${formatUsd(cost.total)}` : `Pionus Codex usage for ${this.lastUsage.model}`;
+    this.statusBar.show();
   }
 };
 
@@ -15432,11 +16954,25 @@ function getReviewTargetArgs(request) {
 // src/extension.ts
 function activate(context) {
   const outputChannel = vscode7.window.createOutputChannel("Pionus Codex Provider", { log: true });
-  const usageStatusBar = new UsageStatusBar(context);
+  const initialConfig = getProviderConfig();
+  const usageStatusBar = new UsageStatusBar(context, {
+    showInStatusBar: initialConfig.showUsageInStatusBar,
+    modelPricingUsdPerMTok: initialConfig.modelPricingUsdPerMTok
+  }, (diagnostic) => outputChannel.warn("Invalid model pricing configuration", diagnostic));
   const provider = new CodexModelProvider(context, outputChannel, usageStatusBar);
   context.subscriptions.push(
     outputChannel,
     usageStatusBar,
+    vscode7.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration(`${getConfigurationSection()}.showUsageInStatusBar`) && !event.affectsConfiguration(`${getConfigurationSection()}.modelPricingUsdPerMTok`)) {
+        return;
+      }
+      const config = getProviderConfig();
+      usageStatusBar.updateConfiguration({
+        showInStatusBar: config.showUsageInStatusBar,
+        modelPricingUsdPerMTok: config.modelPricingUsdPerMTok
+      });
+    }),
     vscode7.lm.registerLanguageModelChatProvider("pionus-codex", provider),
     vscode7.commands.registerCommand("pionus.codex.openDebugLogs", () => outputChannel.show(true)),
     vscode7.commands.registerCommand("pionus.codex.openSettings", () => vscode7.commands.executeCommand("workbench.action.openSettings", getConfigurationSection())),
@@ -15456,12 +16992,14 @@ function activate(context) {
       const apiKey = await vscode7.window.showInputBox({ title: `Set ${target.label} API Key`, prompt: `Enter the API key for ${target.baseURL}`, password: true, ignoreFocusOut: true });
       if (apiKey?.trim()) {
         await setApiKey(context, config.baseURL, apiKey.trim());
+        provider.refreshModels();
         await vscode7.window.showInformationMessage(`${target.label} API key saved.`);
       }
     }),
     vscode7.commands.registerCommand("pionus.codex.clearApiKey", async () => {
       const config = getProviderConfig();
       const target = await clearApiKey(context, config.baseURL);
+      provider.refreshModels();
       await vscode7.window.showInformationMessage(`${target.label} API key cleared.`);
     }),
     vscode7.commands.registerCommand("pionus.codex.selectAgentProfile", async () => selectAgentProfile(outputChannel)),

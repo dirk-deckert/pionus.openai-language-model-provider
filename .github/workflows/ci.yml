@@ -20,3 +20,19 @@ jobs:
       - run: npm test
       - run: npm run compile
       - run: npx --no-install vsce package --out extension.vsix
+
+  activation:
+    strategy:
+      matrix:
+        vscode-version: ['1.104.0', 'stable']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: xvfb-run -a npm run test:integration
+        env:
+          VSCODE_TEST_VERSION: ${{ matrix.vscode-version }}

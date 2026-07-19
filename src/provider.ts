@@ -1,20 +1,25 @@
 import type { ResponseUsage } from 'openai/resources/responses/responses';
 import * as vscode from 'vscode';
 import { convertMessagesToResponsesInput, estimateTokenCount } from './convertMessages.js';
-import { getConfigurationSection, getProviderConfig, normalizeReasoningEffort, type ProviderConfig, type ReasoningEffort } from './config.js';
-import { buildFallbackModels, buildProviderModels, fetchAvailableModels, parseModelIdentifier, type ResolvedProviderModel } from './models.js';
-import { countInputTokens, streamResponseText } from './responsesClient.js';
+import { getConfigurationSection, getProviderConfig, type ProviderConfig, type ReasoningEffort } from './config.js';
+import {
+  buildFallbackModels,
+  buildProviderModels,
+  fetchAvailableModels,
+  parseModelIdentifier,
+  resolveModelMetadata,
+  type ModelDiscoveryTarget,
+  type ProviderModelMetadata,
+  type ResolvedProviderModel
+} from './models.js';
+import { clampOutputTokens, ensureSupportedReasoningEffort, resolveReasoningEffort, type RuntimeModelOptions } from './providerOptions.js';
+import { countInputTokens, ResponsesTransportError, streamResponseText } from './responsesClient.js';
 import { normalizeBaseURL } from './urlUtils.js';
-import { getApiCredentials } from './secrets.js';
+import { classifyCredentialTarget, getApiCredentials } from './secrets.js';
 import { buildInstructions } from './instructions.js';
 import { resolveAgentProfile } from './agentProfiles.js';
 import { collectContextSnapshot, formatContextSnapshot } from './contextCollector.js';
 import { buildActiveSkillInstructions } from './skills.js';
-
-type RuntimeProvideLanguageModelChatResponseOptions = vscode.ProvideLanguageModelChatResponseOptions & {
-  readonly modelConfiguration?: Record<string, unknown>;
-  readonly configuration?: Record<string, unknown>;
-};
 
 type VSCodeWithThinkingPart = typeof vscode & {
   LanguageModelThinkingPart?: new (value: string | string[], id?: string, metadata?: Record<string, unknown>) => unknown;
@@ -53,7 +58,7 @@ interface StreamLogState {
 export class CodexModelProvider implements vscode.LanguageModelChatProvider {
   readonly onDidChangeLanguageModelChatInformation: vscode.Event<void>;
   private readonly modelInfoChangedEmitter = new vscode.EventEmitter<void>();
-  private cachedModels?: { key: string; expiresAt: number; models: ResolvedProviderModel[] };
+  private cachedModels?: { key: string; target: ModelDiscoveryTarget; expiresAt: number; models: ResolvedProviderModel[] };
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -65,11 +70,16 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
       this.modelInfoChangedEmitter,
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration(getConfigurationSection())) {
-          this.cachedModels = undefined;
-          this.modelInfoChangedEmitter.fire();
+          this.refreshModels();
         }
-      })
+      }),
+      this.context.secrets.onDidChange(() => this.refreshModels())
     );
+  }
+
+  refreshModels(): void {
+    this.cachedModels = undefined;
+    this.modelInfoChangedEmitter.fire();
   }
 
   async provideLanguageModelChatInformation(
@@ -78,6 +88,7 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
   ): Promise<vscode.LanguageModelChatInformation[]> {
     const config = getProviderConfig();
     const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
+    throwIfCancellationRequested(token);
     this.outputChannel.debug('provideLanguageModelChatInformation start', {
       silent: options.silent,
       baseURL: normalizeBaseURL(config.baseURL),
@@ -104,22 +115,54 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
   ): Promise<void> {
     const config = getProviderConfig();
     const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
+    if (token.isCancellationRequested) {
+      return;
+    }
     if (!credentials) {
-      throw new Error('Codex credentials are missing. Run "Pionus Codex: Set API Key" or configure ~/.codex/auth.json.');
+      throw vscode.LanguageModelError.NoPermissions('Codex credentials are missing. Run "Pionus Codex: Set API Key" or configure ~/.codex/auth.json.');
     }
 
-    const parsedModel = parseModelIdentifier(model.id || config.model);
-    const reasoningEffort = getReasoningEffort(parsedModel.reasoningEffort, options as RuntimeProvideLanguageModelChatResponseOptions, config.defaultReasoningEffort);
+    const target = classifyCredentialTarget(config.baseURL).kind;
+    const selectedModel = parseModelIdentifier(model.id || config.model);
     const agentProfile = await resolveAgentProfile(config, { hasTools: Boolean(options.tools?.length), outputChannel: this.outputChannel });
+    if (token.isCancellationRequested) {
+      return;
+    }
+    const profileModel = agentProfile?.model ? parseModelIdentifier(agentProfile.model) : undefined;
+    const requestModel = profileModel?.requestModel ?? selectedModel.requestModel;
+    const serviceTier = profileModel?.serviceTier ?? selectedModel.serviceTier;
+    const metadata = this.resolveRequestModelMetadata(requestModel, target, config);
+    if (!metadata || !metadata.streaming) {
+      throw vscode.LanguageModelError.NotFound(`The effective model "${requestModel}" is not available as a streaming language model for this endpoint.`);
+    }
+    if (options.tools?.length && !metadata.toolCalling) {
+      throw new Error(`The effective model "${requestModel}" does not support function tools.`);
+    }
+    const reasoningEffort = ensureSupportedReasoningEffort(resolveReasoningEffort({
+      runtimeOptions: options as RuntimeModelOptions,
+      selectedVariant: profileModel?.reasoningEffort ?? selectedModel.reasoningEffort,
+      agentProfile: agentProfile?.reasoningEffort,
+      globalDefault: config.defaultReasoningEffort,
+      modelDefault: metadata.defaultReasoningEffort
+    }), {
+      model: requestModel,
+      known: metadata.reasoningEffortsKnown,
+      supported: metadata.supportedReasoningEfforts
+    });
+    const maxOutputTokens = clampOutputTokens(config.maxOutputTokens, metadata.maxOutputTokens);
+    const enableImageInput = config.enableImageInput && metadata.imageInput;
     const skillInstructions = await buildActiveSkillInstructions(this.context, config, this.outputChannel);
     const ideContext = config.includeIdeContext ? formatContextSnapshot(collectContextSnapshot(config)) : undefined;
     const instructions = await buildInstructions(config, agentProfile, { ideContext, skillInstructions });
-    const input = convertMessagesToResponsesInput(messages, false);
+    if (token.isCancellationRequested) {
+      return;
+    }
+    const input = convertMessagesToResponsesInput(messages, enableImageInput);
     const requestStartedAt = Date.now();
     const requestLogContext: RequestLogContext = {
       modelId: model.id,
-      requestModel: parsedModel.requestModel,
-      serviceTier: parsedModel.serviceTier ?? 'normal',
+      requestModel,
+      serviceTier: serviceTier ?? 'normal',
       reasoningEffort: reasoningEffort ?? null,
       agentProfile: agentProfile?.id ?? null,
       toolCount: options.tools?.length ?? 0,
@@ -141,7 +184,10 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
       messageCount: messages.length,
       inputItemCount: input.length,
       toolMode: options.toolMode ?? null,
-      omitMaxOutputTokens: credentials.omitMaxOutputTokens
+      omitMaxOutputTokens: credentials.omitMaxOutputTokens,
+      imageInputEnabled: enableImageInput,
+      modelMaxOutputTokens: metadata.maxOutputTokens,
+      requestMaxOutputTokens: maxOutputTokens
     });
 
     try {
@@ -150,14 +196,14 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
         apiKey: credentials.apiKey,
         headers: credentials.headers,
         omitMaxOutputTokens: credentials.omitMaxOutputTokens,
-        model: agentProfile?.model ?? parsedModel.requestModel,
+        model: requestModel,
         instructions,
-        serviceTier: getRequestServiceTier(parsedModel.serviceTier),
+        serviceTier: getRequestServiceTier(serviceTier),
         input,
         tools: options.tools,
         toolMode: options.toolMode,
-        reasoning: reasoningEffort ? { effort: reasoningEffort } : agentProfile?.reasoningEffort ? { effort: agentProfile.reasoningEffort } : undefined,
-        maxOutputTokens: config.maxOutputTokens,
+        reasoning: reasoningEffort ? { effort: reasoningEffort } : undefined,
+        maxOutputTokens,
         token,
         onTextDelta: (text) => {
           streamLogState.textDeltaCount += 1;
@@ -166,13 +212,16 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
           progress.report(new vscode.LanguageModelTextPart(text));
         },
         onReasoningTextDelta: (text) => {
-          streamLogState.reasoningDeltaCount += 1;
-          streamLogState.reasoningCharCount += text.length;
+          reportReasoningDelta(text, streamLogState, progress);
+        },
+        onReasoningSummaryDelta: (text) => {
+          reportReasoningDelta(text, streamLogState, progress);
+        },
+        onRefusalDelta: (text) => {
+          streamLogState.textDeltaCount += 1;
+          streamLogState.textCharCount += text.length;
           streamLogState.lastEventAt = Date.now();
-          const thinkingPart = createThinkingPart(text);
-          if (thinkingPart) {
-            progress.report(thinkingPart);
-          }
+          progress.report(new vscode.LanguageModelTextPart(text));
         },
         onToolCall: (callId, name, input) => {
           streamLogState.toolCallCount += 1;
@@ -211,7 +260,7 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
             progress.report(usagePart);
           }
           if (response.usage) {
-            this.usageSink?.record({ model: parsedModel.requestModel, usage: response.usage, completedAt: Date.now() });
+            this.usageSink?.record({ model: requestModel, usage: response.usage, completedAt: Date.now() });
           }
         },
         onResponseFailed: (message) => {
@@ -220,6 +269,28 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
             ...toLogPayload(requestLogContext, streamLogState),
             message
           });
+        },
+        onResponseIncomplete: (message, response) => {
+          streamLogState.lastEventAt = Date.now();
+          streamLogState.responseId = response.id ?? streamLogState.responseId;
+          this.outputChannel.error('response incomplete event', {
+            ...toLogPayload(requestLogContext, streamLogState),
+            message,
+            incompleteDetails: response.incomplete_details ?? null
+          });
+        },
+        onResponseError: (message, code, param) => {
+          streamLogState.lastEventAt = Date.now();
+          this.outputChannel.error('response error event', {
+            ...toLogPayload(requestLogContext, streamLogState),
+            message,
+            code: code ?? null,
+            param: param ?? null
+          });
+        },
+        onCancelled: () => {
+          streamLogState.lastEventAt = Date.now();
+          this.outputChannel.warn('response cancelled', toLogPayload(requestLogContext, streamLogState));
         },
         onUnhandledEvent: (eventType) => {
           streamLogState.lastEventAt = Date.now();
@@ -238,7 +309,10 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
         ...toLogPayload(requestLogContext, streamLogState),
         error: describeError(error)
       });
-      throw error;
+      if (token.isCancellationRequested) {
+        return;
+      }
+      throw toLanguageModelError(error);
     }
 
     if (token.isCancellationRequested) {
@@ -254,14 +328,23 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
     token: vscode.CancellationToken
   ): Promise<number> {
     const config = getProviderConfig();
+    throwIfCancellationRequested(token);
+    const target = classifyCredentialTarget(config.baseURL).kind;
+    const parsedModel = parseModelIdentifier(model.id || config.model);
+    const metadata = this.resolveRequestModelMetadata(parsedModel.requestModel, target, config);
+    if (!metadata || !metadata.streaming) {
+      throw vscode.LanguageModelError.NotFound(`The model "${parsedModel.requestModel}" is not available for token counting.`);
+    }
+    const enableImageInput = config.enableImageInput && metadata.imageInput;
+    const input = typeof text === 'string' ? text : convertMessagesToResponsesInput([text], enableImageInput);
+    const fallbackTokenCount = estimateConvertedTokenCount(text, input);
     const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
-    if (!credentials || !supportsOfficialTokenCounting(config.baseURL)) {
-      return estimateTokenCount(text);
+    throwIfCancellationRequested(token);
+    if (!credentials || target === 'chatgpt') {
+      return fallbackTokenCount;
     }
 
     try {
-      const parsedModel = parseModelIdentifier(model.id || config.model);
-      const input = typeof text === 'string' ? text : convertMessagesToResponsesInput([text], false);
       return await countInputTokens({
         baseURL: config.baseURL,
         apiKey: credentials.apiKey,
@@ -270,8 +353,14 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
         input,
         token
       });
-    } catch {
-      return estimateTokenCount(text);
+    } catch (error) {
+      throwIfCancellationRequested(token);
+      this.outputChannel.debug('Exact Responses input-token count unavailable; using local estimate', {
+        model: parsedModel.requestModel,
+        target,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return fallbackTokenCount;
     }
   }
 
@@ -287,20 +376,31 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
   }
 
   private async getAvailableModels(config: ProviderConfig, credentials: NonNullable<Awaited<ReturnType<typeof getApiCredentials>>>, token: vscode.CancellationToken): Promise<ResolvedProviderModel[]> {
-    const cacheKey = [config.baseURL, config.clientVersion, config.model, config.defaultReasoningEffort, credentials.source].join('|');
+    throwIfCancellationRequested(token);
+    const target = classifyCredentialTarget(config.baseURL).kind;
+    const cacheKey = [target, config.baseURL, config.clientVersion, config.model, config.defaultReasoningEffort, config.maxOutputTokens, credentials.source].join('|');
     if (this.cachedModels && this.cachedModels.key === cacheKey && this.cachedModels.expiresAt > Date.now()) {
       return this.cachedModels.models;
     }
 
     let models: ResolvedProviderModel[];
     try {
-      models = buildProviderModels(config, await fetchAvailableModels(config, credentials, token));
+      models = buildProviderModels(config, await fetchAvailableModels(config, credentials, token, target), target);
     } catch (error) {
+      throwIfCancellationRequested(token);
       this.outputChannel.warn('getAvailableModels discovery failed, using fallback model', { error: error instanceof Error ? error.message : String(error) });
-      models = buildFallbackModels(config);
+      models = buildFallbackModels(config, target);
     }
-    this.cachedModels = { key: cacheKey, expiresAt: Date.now() + 60_000, models };
+    throwIfCancellationRequested(token);
+    this.cachedModels = { key: cacheKey, target, expiresAt: Date.now() + 60_000, models };
     return models;
+  }
+
+  private resolveRequestModelMetadata(requestModel: string, target: ModelDiscoveryTarget, config: ProviderConfig): ProviderModelMetadata | undefined {
+    const cached = this.cachedModels?.target === target
+      ? this.cachedModels.models.find((model) => model.requestModel === requestModel)?.metadata
+      : undefined;
+    return cached ?? resolveModelMetadata(requestModel, target, config);
   }
 
   private async promptForCredentials(): Promise<void> {
@@ -317,21 +417,60 @@ function getRequestServiceTier(serviceTier: 'fast' | undefined): 'priority' | un
   return serviceTier === 'fast' ? 'priority' : undefined;
 }
 
-function getReasoningEffort(selectedReasoningEffort: ReasoningEffort | undefined, options: RuntimeProvideLanguageModelChatResponseOptions, defaultReasoningEffort: ReasoningEffort | undefined): ReasoningEffort | undefined {
-  return normalizeReasoningEffort(options.modelConfiguration?.reasoningEffort ?? options.configuration?.reasoningEffort)
-    ?? normalizeReasoningEffort(options.modelOptions?.reasoningEffort)
-    ?? normalizeReasoningEffort((options.modelOptions?.reasoning as { effort?: unknown } | undefined)?.effort)
-    ?? defaultReasoningEffort
-    ?? selectedReasoningEffort;
-}
-
-function supportsOfficialTokenCounting(baseURL: string): boolean {
-  return !normalizeBaseURL(baseURL).toLowerCase().includes('chatgpt.com/backend-api/codex');
-}
-
 function createThinkingPart(text: string): vscode.LanguageModelResponsePart | undefined {
   const ThinkingPart = (vscode as VSCodeWithThinkingPart).LanguageModelThinkingPart;
   return typeof ThinkingPart === 'function' ? new ThinkingPart(text) as vscode.LanguageModelResponsePart : undefined;
+}
+
+function reportReasoningDelta(
+  text: string,
+  state: StreamLogState,
+  progress: vscode.Progress<vscode.LanguageModelResponsePart>
+): void {
+  state.reasoningDeltaCount += 1;
+  state.reasoningCharCount += text.length;
+  state.lastEventAt = Date.now();
+  const thinkingPart = createThinkingPart(text);
+  if (thinkingPart) {
+    progress.report(thinkingPart);
+  }
+}
+
+function estimateConvertedTokenCount(
+  original: string | vscode.LanguageModelChatRequestMessage,
+  converted: string | ReturnType<typeof convertMessagesToResponsesInput>
+): number {
+  if (typeof original === 'string') {
+    return estimateTokenCount(original);
+  }
+  const serialized = JSON.stringify(converted);
+  return serialized === '[]' ? 0 : Math.max(1, Math.ceil(serialized.length / 4));
+}
+
+function throwIfCancellationRequested(token: vscode.CancellationToken): void {
+  if (token.isCancellationRequested) {
+    throw new vscode.CancellationError();
+  }
+}
+
+function toLanguageModelError(error: unknown): Error {
+  if (!(error instanceof ResponsesTransportError)) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+  switch (error.kind) {
+    case 'noPermissions':
+      return vscode.LanguageModelError.NoPermissions(error.message);
+    case 'notFound':
+      return vscode.LanguageModelError.NotFound(error.message);
+    case 'blocked':
+      return vscode.LanguageModelError.Blocked(error.message);
+    case 'transport':
+    case 'server':
+    case 'failed':
+    case 'incomplete':
+    case 'malformed':
+      return new Error(error.message, { cause: error });
+  }
 }
 
 function createUsageDataPart(usage: ResponseUsage | null | undefined): vscode.LanguageModelResponsePart | undefined {
