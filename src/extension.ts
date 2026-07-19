@@ -8,9 +8,10 @@ import { collectContextSnapshot, formatContextSnapshot, getPrimaryWorkspaceFolde
 import { clearActiveSkillIds, discoverSkills, getActiveSkillIds, setActiveSkillIds } from './skills.js';
 import { buildReadOnlyCliCommand, toShellCommand } from './cliBridge.js';
 import { buildReviewCliCommand, describeReviewRequest, type ReviewRequest } from './review.js';
+import { EXTENSION_DISPLAY_NAME } from './branding.js';
 
 export function activate(context: vscode.ExtensionContext): void {
-  const outputChannel = vscode.window.createOutputChannel('Pionus Codex Provider', { log: true });
+  const outputChannel = vscode.window.createOutputChannel(EXTENSION_DISPLAY_NAME, { log: true });
   const initialConfig = getProviderConfig();
   const usageStatusBar = new UsageStatusBar(context, {
     showInStatusBar: initialConfig.showUsageInStatusBar,
@@ -67,7 +68,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('pionus.codex.selectSkills', async () => selectSkills(context, outputChannel)),
     vscode.commands.registerCommand('pionus.codex.clearSkills', async () => {
       await clearActiveSkillIds(context);
-      await vscode.window.showInformationMessage('Pionus Codex skills cleared.');
+      await vscode.window.showInformationMessage(`${EXTENSION_DISPLAY_NAME}: skills cleared.`);
     }),
     vscode.commands.registerCommand('pionus.codex.runCliExec', runCliExec),
     vscode.commands.registerCommand('pionus.codex.runCliReview', runCliReview),
@@ -88,7 +89,7 @@ export function activate(context: vscode.ExtensionContext): void {
         'Set API Key',
         'Clear API Key',
         'Open Settings'
-      ], { title: 'Pionus Codex' });
+      ], { title: EXTENSION_DISPLAY_NAME });
       if (!action) {
         return;
       }
@@ -120,7 +121,7 @@ async function selectAgentProfile(outputChannel: vscode.LogOutputChannel): Promi
     label: profile.id,
     description: profile.name,
     detail: profile.description
-  })), { title: 'Select Pionus Codex Agent Profile' });
+  })), { title: `${EXTENSION_DISPLAY_NAME}: Select Agent Profile` });
   if (!selected) {
     return;
   }
@@ -129,20 +130,22 @@ async function selectAgentProfile(outputChannel: vscode.LogOutputChannel): Promi
 
 async function setActiveAgentProfile(value: string | null): Promise<void> {
   await vscode.workspace.getConfiguration(getConfigurationSection()).update('activeAgentProfile', value, vscode.ConfigurationTarget.Global);
-  await vscode.window.showInformationMessage(value ? `Pionus Codex agent profile set to ${value}.` : 'Pionus Codex agent profile reset to automatic selection.');
+  await vscode.window.showInformationMessage(value
+    ? `${EXTENSION_DISPLAY_NAME}: agent profile set to ${value}.`
+    : `${EXTENSION_DISPLAY_NAME}: agent profile reset to automatic selection.`);
 }
 
 async function copyContextSnapshot(): Promise<void> {
   const snapshot = formatContextSnapshot(collectContextSnapshot(getProviderConfig()));
   await vscode.env.clipboard.writeText(snapshot);
-  await vscode.window.showInformationMessage('Pionus Codex IDE context snapshot copied.');
+  await vscode.window.showInformationMessage(`${EXTENSION_DISPLAY_NAME}: IDE context snapshot copied.`);
 }
 
 async function selectSkills(context: vscode.ExtensionContext, outputChannel: vscode.LogOutputChannel): Promise<void> {
   const config = getProviderConfig();
   const skills = await discoverSkills(config, outputChannel);
   if (skills.length === 0) {
-    await vscode.window.showInformationMessage('No Pionus Codex skills found. Add SKILL.md files to pionus.codex.skillPaths.');
+    await vscode.window.showInformationMessage(`${EXTENSION_DISPLAY_NAME}: no skills found. Add SKILL.md files to pionus.codex.skillPaths.`);
     return;
   }
   const activeSkillIds = new Set(getActiveSkillIds(context));
@@ -151,12 +154,12 @@ async function selectSkills(context: vscode.ExtensionContext, outputChannel: vsc
     description: skill.name,
     detail: skill.filePath,
     picked: activeSkillIds.has(skill.id)
-  })), { title: 'Select Pionus Codex Skills', canPickMany: true });
+  })), { title: `${EXTENSION_DISPLAY_NAME}: Select Skills`, canPickMany: true });
   if (!selected) {
     return;
   }
   await setActiveSkillIds(context, selected.map((item) => item.label));
-  await vscode.window.showInformationMessage(`Pionus Codex active skills: ${selected.length}.`);
+  await vscode.window.showInformationMessage(`${EXTENSION_DISPLAY_NAME}: ${selected.length} active skills.`);
 }
 
 async function runCliExec(): Promise<void> {
@@ -185,7 +188,7 @@ async function runCliExec(): Promise<void> {
     imagePaths: imageUris?.map((uri) => uri.fsPath),
     enableSearch
   });
-  launchTerminal('Pionus Codex Exec', toShellCommand(command), getPrimaryWorkspaceFolder());
+  launchTerminal(`${EXTENSION_DISPLAY_NAME}: Codex CLI Exec`, toShellCommand(command), getPrimaryWorkspaceFolder());
 }
 
 async function runCliReview(): Promise<void> {
@@ -218,7 +221,7 @@ async function runCliReview(): Promise<void> {
   });
   const request: ReviewRequest = { mode: mode.requestMode, target, instructions };
   const command = buildReviewCliCommand(getProviderConfig(), request);
-  launchTerminal(`Pionus Codex Review: ${describeReviewRequest(request)}`, toShellCommand(command), getPrimaryWorkspaceFolder());
+  launchTerminal(`${EXTENSION_DISPLAY_NAME}: Codex CLI Review: ${describeReviewRequest(request)}`, toShellCommand(command), getPrimaryWorkspaceFolder());
 }
 
 async function ensureCliBridgeEnabled(): Promise<boolean> {
@@ -227,7 +230,7 @@ async function ensureCliBridgeEnabled(): Promise<boolean> {
     return true;
   }
 
-  const action = await vscode.window.showWarningMessage('Pionus Codex CLI bridge is disabled.', 'Enable and Run', 'Open Settings');
+  const action = await vscode.window.showWarningMessage(`${EXTENSION_DISPLAY_NAME}: Codex CLI bridge is disabled.`, 'Enable and Run', 'Open Settings');
   if (action === 'Enable and Run') {
     await vscode.workspace.getConfiguration(getConfigurationSection()).update('enableCliBridge', true, vscode.ConfigurationTarget.Global);
     return true;

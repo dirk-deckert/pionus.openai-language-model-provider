@@ -109,14 +109,14 @@ test('UsageStatusBar retains usage while hidden and reacts immediately to config
       }
     });
     assert.equal(item.showCount, 1, 'showing must happen immediately without recording another response');
-    assert.equal(item.text, 'Codex 110 tokens');
+    assert.equal(item.text, 'Pionus OpenAI Language Model Provider: 110 tokens');
     assert.match(String(item.tooltip), /input 100, output 10, total 110/);
     assert.match(String(item.tooltip), /Estimated cost: \$0\.000687/);
 
     await usageStatus.showLastUsage();
     assert.equal(
       runtime.messages.at(-1),
-      'Codex usage: input 100, output 10, total 110. Estimated cost: $0.000687.'
+      'Pionus OpenAI Language Model Provider usage: input 100, output 10, total 110. Estimated cost: $0.000687.'
     );
 
     usageStatus.updateConfiguration({
@@ -142,7 +142,7 @@ test('UsageStatusBar retains usage while hidden and reacts immediately to config
       modelPricingUsdPerMTok: {}
     });
     await emptyStatus.showLastUsage();
-    assert.equal(runtime.messages.at(-1), 'No Codex usage recorded yet.');
+    assert.equal(runtime.messages.at(-1), 'Pionus OpenAI Language Model Provider: no usage recorded yet.');
 
     usageStatus.dispose();
     assert.equal(item.disposeCount, 1);

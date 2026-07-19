@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2
+
+- Use the full Pionus OpenAI Language Model Provider name consistently across
+  the provider label, command titles, configuration, status UI, logs, and README.
+- Preserve all existing command IDs, setting IDs, and the `pionus-codex` vendor ID.
+
 ## 0.1.1
 
 - Add a dedicated Pionus OpenAI Language Model Provider extension icon.

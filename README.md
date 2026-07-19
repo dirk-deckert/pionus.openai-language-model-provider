@@ -1,6 +1,8 @@
 # Pionus OpenAI Language Model Provider
 
-VS Code extension from Pionus GmbH that exposes OpenAI Codex models as a VS Code/Copilot Chat language model provider under vendor `pionus-codex`.
+Pionus OpenAI Language Model Provider is a VS Code extension from Pionus GmbH
+that exposes OpenAI models through the VS Code Language Model API under the
+stable vendor ID `pionus-codex`.
 
 The extension maps OpenAI Responses capabilities onto VS Code's `LanguageModelChatProvider` API. It also retains optional Codex context enhancements and local utilities, but it is intentionally not a replacement for the official Codex product UI: it does not register sidebar views, custom editors, cloud-task UI, chat-session UI, or inline completions.
 
@@ -8,7 +10,10 @@ The extension maps OpenAI Responses capabilities onto VS Code's `LanguageModelCh
 
 ### Models and discovery
 
-Version 0.1.0 maintains reviewed capability metadata for the current text-output Responses models in the GPT-5.6, GPT-5.5, and GPT-5.4 families. This is the provider's explicit model scope; it is not a claim to cover every model in the OpenAI catalog.
+Pionus OpenAI Language Model Provider maintains reviewed capability metadata
+for the current text-output Responses models in the GPT-5.6, GPT-5.5, and
+GPT-5.4 families. This is the provider's explicit model scope; it is not a claim
+to cover every model in the OpenAI catalog.
 
 Discovery is endpoint-specific:
 
@@ -84,13 +89,16 @@ Features that require the official Codex app/sidebar/cloud runtime remain out of
 
 The extension ID changed from `pionus.codex-chat-provider` to `pionus.openai-language-model-provider`. VS Code treats this as a new extension. Extension-scoped secret and global storage may therefore need to be configured again. Credentials stored in `~/.codex/auth.json` are unaffected.
 
-For source-based installation through the configuration repository, run:
+For configuration-managed installation, run:
 
 ```sh
 ~/clouds/gitlab-dirk-deckert/configuration/Common/vscode/install
 ```
 
-The installer clones or fast-forwards this repository under `${PIONUS_VSCODE_REPOS_DIR:-$HOME/clouds/github-dirk-deckert}`, then symlinks it into `${VSCODE_EXTENSIONS_DIR:-$HOME/.vscode/extensions}`. It is portable across user names, Apple Silicon, and Intel macOS machines.
+The installer clones or fast-forwards this repository under
+`${PIONUS_VSCODE_REPOS_DIR:-$HOME/clouds/github-dirk-deckert}`, downloads the
+matching GitHub Release VSIX, and registers it with the official VS Code CLI.
+It is portable across user names, Apple Silicon, and Intel macOS machines.
 
 ## Development
 

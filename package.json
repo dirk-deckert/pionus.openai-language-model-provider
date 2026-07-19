@@ -1,8 +1,8 @@
 {
   "name": "openai-language-model-provider",
   "displayName": "Pionus OpenAI Language Model Provider",
-  "description": "Expose Codex as a VS Code/Copilot Chat language model provider with Codex-like settings and diagnostics.",
-  "version": "0.1.1",
+  "description": "Pionus OpenAI Language Model Provider exposes OpenAI models through the VS Code Language Model API.",
+  "version": "0.1.2",
   "publisher": "pionus",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -57,70 +57,70 @@
     "languageModelChatProviders": [
       {
         "vendor": "pionus-codex",
-        "displayName": "Codex",
+        "displayName": "Pionus OpenAI Language Model Provider",
         "managementCommand": "pionus.codex.manage"
       }
     ],
     "commands": [
       {
         "command": "pionus.codex.manage",
-        "title": "Pionus Codex: Manage"
+        "title": "Pionus OpenAI Language Model Provider: Manage"
       },
       {
         "command": "pionus.codex.openSettings",
-        "title": "Pionus Codex: Open Settings"
+        "title": "Pionus OpenAI Language Model Provider: Open Settings"
       },
       {
         "command": "pionus.codex.openDebugLogs",
-        "title": "Pionus Codex: Open Debug Logs"
+        "title": "Pionus OpenAI Language Model Provider: Open Debug Logs"
       },
       {
         "command": "pionus.codex.setApiKey",
-        "title": "Pionus Codex: Set API Key"
+        "title": "Pionus OpenAI Language Model Provider: Set API Key"
       },
       {
         "command": "pionus.codex.clearApiKey",
-        "title": "Pionus Codex: Clear API Key"
+        "title": "Pionus OpenAI Language Model Provider: Clear API Key"
       },
       {
         "command": "pionus.codex.selectAgentProfile",
-        "title": "Pionus Codex: Select Agent Profile"
+        "title": "Pionus OpenAI Language Model Provider: Select Agent Profile"
       },
       {
         "command": "pionus.codex.resetAgentProfile",
-        "title": "Pionus Codex: Reset Agent Profile"
+        "title": "Pionus OpenAI Language Model Provider: Reset Agent Profile"
       },
       {
         "command": "pionus.codex.showStatus",
-        "title": "Pionus Codex: Show Status"
+        "title": "Pionus OpenAI Language Model Provider: Show Status"
       },
       {
         "command": "pionus.codex.showLastUsage",
-        "title": "Pionus Codex: Show Last Usage"
+        "title": "Pionus OpenAI Language Model Provider: Show Last Usage"
       },
       {
         "command": "pionus.codex.copyContextSnapshot",
-        "title": "Pionus Codex: Copy IDE Context Snapshot"
+        "title": "Pionus OpenAI Language Model Provider: Copy IDE Context Snapshot"
       },
       {
         "command": "pionus.codex.selectSkills",
-        "title": "Pionus Codex: Select Skills"
+        "title": "Pionus OpenAI Language Model Provider: Select Skills"
       },
       {
         "command": "pionus.codex.clearSkills",
-        "title": "Pionus Codex: Clear Skills"
+        "title": "Pionus OpenAI Language Model Provider: Clear Skills"
       },
       {
         "command": "pionus.codex.runCliExec",
-        "title": "Pionus Codex: Run CLI Exec"
+        "title": "Pionus OpenAI Language Model Provider: Run Codex CLI Exec"
       },
       {
         "command": "pionus.codex.runCliReview",
-        "title": "Pionus Codex: Run CLI Review"
+        "title": "Pionus OpenAI Language Model Provider: Run Codex CLI Review"
       }
     ],
     "configuration": {
-      "title": "Pionus Codex",
+      "title": "Pionus OpenAI Language Model Provider",
       "properties": {
         "pionus.codex.baseURL": {
           "type": "string",
@@ -257,7 +257,7 @@
         "pionus.codex.showUsageInStatusBar": {
           "type": "boolean",
           "default": true,
-          "description": "Show last completed Codex usage in the status bar."
+          "description": "Show the last completed model usage in the status bar."
         },
         "pionus.codex.modelPricingUsdPerMTok": {
           "type": "object",

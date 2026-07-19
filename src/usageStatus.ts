@@ -1,5 +1,6 @@
 import type { ResponseUsage } from 'openai/resources/responses/responses';
 import * as vscode from 'vscode';
+import { EXTENSION_DISPLAY_NAME } from './branding.js';
 import {
   calculateUsageCostUsd,
   formatUsageTokens,
@@ -61,12 +62,12 @@ export class UsageStatusBar implements vscode.Disposable {
 
   async showLastUsage(): Promise<void> {
     if (!this.lastUsage) {
-      await vscode.window.showInformationMessage('No Codex usage recorded yet.');
+      await vscode.window.showInformationMessage(`${EXTENSION_DISPLAY_NAME}: no usage recorded yet.`);
       return;
     }
     const cost = calculateUsageCostUsd(this.lastUsage.model, this.lastUsage.usage, this.pricing);
     const costText = cost ? ` Estimated cost: ${formatUsd(cost.total)}.` : '';
-    await vscode.window.showInformationMessage(`Codex usage: ${formatUsageTokens(this.lastUsage.usage)}.${costText}`);
+    await vscode.window.showInformationMessage(`${EXTENSION_DISPLAY_NAME} usage: ${formatUsageTokens(this.lastUsage.usage)}.${costText}`);
   }
 
   dispose(): void {
@@ -81,10 +82,10 @@ export class UsageStatusBar implements vscode.Disposable {
 
     const tokens = getUsageBreakdown(this.lastUsage.usage);
     const cost = calculateUsageCostUsd(this.lastUsage.model, this.lastUsage.usage, this.pricing);
-    this.statusBar.text = `Codex ${tokens.totalTokens} tokens`;
+    this.statusBar.text = `${EXTENSION_DISPLAY_NAME}: ${tokens.totalTokens} tokens`;
     this.statusBar.tooltip = cost
-      ? `Pionus Codex usage for ${this.lastUsage.model}\n${formatUsageTokens(this.lastUsage.usage)}\nEstimated cost: ${formatUsd(cost.total)}`
-      : `Pionus Codex usage for ${this.lastUsage.model}`;
+      ? `${EXTENSION_DISPLAY_NAME} usage for ${this.lastUsage.model}\n${formatUsageTokens(this.lastUsage.usage)}\nEstimated cost: ${formatUsd(cost.total)}`
+      : `${EXTENSION_DISPLAY_NAME} usage for ${this.lastUsage.model}`;
     this.statusBar.show();
   }
 }

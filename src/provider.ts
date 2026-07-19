@@ -16,6 +16,7 @@ import { clampOutputTokens, ensureSupportedReasoningEffort, resolveReasoningEffo
 import { countInputTokens, ResponsesTransportError, streamResponseText } from './responsesClient.js';
 import { normalizeBaseURL } from './urlUtils.js';
 import { classifyCredentialTarget, getApiCredentials } from './secrets.js';
+import { EXTENSION_DISPLAY_NAME } from './branding.js';
 import { buildInstructions } from './instructions.js';
 import { resolveAgentProfile } from './agentProfiles.js';
 import { collectContextSnapshot, formatContextSnapshot } from './contextCollector.js';
@@ -119,7 +120,7 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
       return;
     }
     if (!credentials) {
-      throw vscode.LanguageModelError.NoPermissions('Codex credentials are missing. Run "Pionus Codex: Set API Key" or configure ~/.codex/auth.json.');
+      throw vscode.LanguageModelError.NoPermissions(`Codex credentials are missing. Run "${EXTENSION_DISPLAY_NAME}: Set API Key" or configure ~/.codex/auth.json.`);
     }
 
     const target = classifyCredentialTarget(config.baseURL).kind;
@@ -369,7 +370,7 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
     const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
     const agentProfile = await resolveAgentProfile(config, { hasTools: false, outputChannel: this.outputChannel });
     await vscode.window.showInformationMessage([
-      `Pionus Codex: ${credentials ? `credentials from ${credentials.source}` : 'credentials missing'}`,
+      `${EXTENSION_DISPLAY_NAME}: ${credentials ? `credentials from ${credentials.source}` : 'credentials missing'}`,
       `model ${config.model}`,
       `agent ${agentProfile?.id ?? 'none'}`
     ].join(' | '));
@@ -404,7 +405,7 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
   }
 
   private async promptForCredentials(): Promise<void> {
-    const action = await vscode.window.showWarningMessage('Pionus Codex needs Codex credentials. Set an API key or add credentials to ~/.codex/auth.json.', 'Set API Key', 'Open Settings');
+    const action = await vscode.window.showWarningMessage(`${EXTENSION_DISPLAY_NAME} needs Codex credentials. Set an API key or add credentials to ~/.codex/auth.json.`, 'Set API Key', 'Open Settings');
     if (action === 'Set API Key') {
       await vscode.commands.executeCommand('pionus.codex.setApiKey');
     } else if (action === 'Open Settings') {

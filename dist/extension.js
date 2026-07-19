@@ -15932,6 +15932,9 @@ async function readSecretStorageCredentials(context, target) {
   };
 }
 
+// src/branding.ts
+var EXTENSION_DISPLAY_NAME = "Pionus OpenAI Language Model Provider";
+
 // src/instructions.ts
 var import_promises2 = require("node:fs/promises");
 var import_node_os2 = require("node:os");
@@ -16327,7 +16330,7 @@ var CodexModelProvider = class {
       return;
     }
     if (!credentials) {
-      throw vscode5.LanguageModelError.NoPermissions('Codex credentials are missing. Run "Pionus Codex: Set API Key" or configure ~/.codex/auth.json.');
+      throw vscode5.LanguageModelError.NoPermissions(`Codex credentials are missing. Run "${EXTENSION_DISPLAY_NAME}: Set API Key" or configure ~/.codex/auth.json.`);
     }
     const target = classifyCredentialTarget(config.baseURL).kind;
     const selectedModel = parseModelIdentifier(model.id || config.model);
@@ -16566,7 +16569,7 @@ var CodexModelProvider = class {
     const credentials = await getApiCredentials(this.context, config.baseURL, config.credentialsSource);
     const agentProfile = await resolveAgentProfile(config, { hasTools: false, outputChannel: this.outputChannel });
     await vscode5.window.showInformationMessage([
-      `Pionus Codex: ${credentials ? `credentials from ${credentials.source}` : "credentials missing"}`,
+      `${EXTENSION_DISPLAY_NAME}: ${credentials ? `credentials from ${credentials.source}` : "credentials missing"}`,
       `model ${config.model}`,
       `agent ${agentProfile?.id ?? "none"}`
     ].join(" | "));
@@ -16595,7 +16598,7 @@ var CodexModelProvider = class {
     return cached ?? resolveModelMetadata(requestModel, target, config);
   }
   async promptForCredentials() {
-    const action = await vscode5.window.showWarningMessage("Pionus Codex needs Codex credentials. Set an API key or add credentials to ~/.codex/auth.json.", "Set API Key", "Open Settings");
+    const action = await vscode5.window.showWarningMessage(`${EXTENSION_DISPLAY_NAME} needs Codex credentials. Set an API key or add credentials to ~/.codex/auth.json.`, "Set API Key", "Open Settings");
     if (action === "Set API Key") {
       await vscode5.commands.executeCommand("pionus.codex.setApiKey");
     } else if (action === "Open Settings") {
@@ -16862,12 +16865,12 @@ var UsageStatusBar = class {
   }
   async showLastUsage() {
     if (!this.lastUsage) {
-      await vscode6.window.showInformationMessage("No Codex usage recorded yet.");
+      await vscode6.window.showInformationMessage(`${EXTENSION_DISPLAY_NAME}: no usage recorded yet.`);
       return;
     }
     const cost = calculateUsageCostUsd(this.lastUsage.model, this.lastUsage.usage, this.pricing);
     const costText = cost ? ` Estimated cost: ${formatUsd(cost.total)}.` : "";
-    await vscode6.window.showInformationMessage(`Codex usage: ${formatUsageTokens(this.lastUsage.usage)}.${costText}`);
+    await vscode6.window.showInformationMessage(`${EXTENSION_DISPLAY_NAME} usage: ${formatUsageTokens(this.lastUsage.usage)}.${costText}`);
   }
   dispose() {
     this.statusBar.dispose();
@@ -16879,10 +16882,10 @@ var UsageStatusBar = class {
     }
     const tokens = getUsageBreakdown(this.lastUsage.usage);
     const cost = calculateUsageCostUsd(this.lastUsage.model, this.lastUsage.usage, this.pricing);
-    this.statusBar.text = `Codex ${tokens.totalTokens} tokens`;
-    this.statusBar.tooltip = cost ? `Pionus Codex usage for ${this.lastUsage.model}
+    this.statusBar.text = `${EXTENSION_DISPLAY_NAME}: ${tokens.totalTokens} tokens`;
+    this.statusBar.tooltip = cost ? `${EXTENSION_DISPLAY_NAME} usage for ${this.lastUsage.model}
 ${formatUsageTokens(this.lastUsage.usage)}
-Estimated cost: ${formatUsd(cost.total)}` : `Pionus Codex usage for ${this.lastUsage.model}`;
+Estimated cost: ${formatUsd(cost.total)}` : `${EXTENSION_DISPLAY_NAME} usage for ${this.lastUsage.model}`;
     this.statusBar.show();
   }
 };
@@ -16953,7 +16956,7 @@ function getReviewTargetArgs(request) {
 
 // src/extension.ts
 function activate(context) {
-  const outputChannel = vscode7.window.createOutputChannel("Pionus Codex Provider", { log: true });
+  const outputChannel = vscode7.window.createOutputChannel(EXTENSION_DISPLAY_NAME, { log: true });
   const initialConfig = getProviderConfig();
   const usageStatusBar = new UsageStatusBar(context, {
     showInStatusBar: initialConfig.showUsageInStatusBar,
@@ -17008,7 +17011,7 @@ function activate(context) {
     vscode7.commands.registerCommand("pionus.codex.selectSkills", async () => selectSkills(context, outputChannel)),
     vscode7.commands.registerCommand("pionus.codex.clearSkills", async () => {
       await clearActiveSkillIds(context);
-      await vscode7.window.showInformationMessage("Pionus Codex skills cleared.");
+      await vscode7.window.showInformationMessage(`${EXTENSION_DISPLAY_NAME}: skills cleared.`);
     }),
     vscode7.commands.registerCommand("pionus.codex.runCliExec", runCliExec),
     vscode7.commands.registerCommand("pionus.codex.runCliReview", runCliReview),
@@ -17029,7 +17032,7 @@ function activate(context) {
         "Set API Key",
         "Clear API Key",
         "Open Settings"
-      ], { title: "Pionus Codex" });
+      ], { title: EXTENSION_DISPLAY_NAME });
       if (!action) {
         return;
       }
@@ -17060,7 +17063,7 @@ async function selectAgentProfile(outputChannel) {
     label: profile.id,
     description: profile.name,
     detail: profile.description
-  })), { title: "Select Pionus Codex Agent Profile" });
+  })), { title: `${EXTENSION_DISPLAY_NAME}: Select Agent Profile` });
   if (!selected) {
     return;
   }
@@ -17068,18 +17071,18 @@ async function selectAgentProfile(outputChannel) {
 }
 async function setActiveAgentProfile(value) {
   await vscode7.workspace.getConfiguration(getConfigurationSection()).update("activeAgentProfile", value, vscode7.ConfigurationTarget.Global);
-  await vscode7.window.showInformationMessage(value ? `Pionus Codex agent profile set to ${value}.` : "Pionus Codex agent profile reset to automatic selection.");
+  await vscode7.window.showInformationMessage(value ? `${EXTENSION_DISPLAY_NAME}: agent profile set to ${value}.` : `${EXTENSION_DISPLAY_NAME}: agent profile reset to automatic selection.`);
 }
 async function copyContextSnapshot() {
   const snapshot = formatContextSnapshot(collectContextSnapshot(getProviderConfig()));
   await vscode7.env.clipboard.writeText(snapshot);
-  await vscode7.window.showInformationMessage("Pionus Codex IDE context snapshot copied.");
+  await vscode7.window.showInformationMessage(`${EXTENSION_DISPLAY_NAME}: IDE context snapshot copied.`);
 }
 async function selectSkills(context, outputChannel) {
   const config = getProviderConfig();
   const skills = await discoverSkills(config, outputChannel);
   if (skills.length === 0) {
-    await vscode7.window.showInformationMessage("No Pionus Codex skills found. Add SKILL.md files to pionus.codex.skillPaths.");
+    await vscode7.window.showInformationMessage(`${EXTENSION_DISPLAY_NAME}: no skills found. Add SKILL.md files to pionus.codex.skillPaths.`);
     return;
   }
   const activeSkillIds = new Set(getActiveSkillIds(context));
@@ -17088,12 +17091,12 @@ async function selectSkills(context, outputChannel) {
     description: skill.name,
     detail: skill.filePath,
     picked: activeSkillIds.has(skill.id)
-  })), { title: "Select Pionus Codex Skills", canPickMany: true });
+  })), { title: `${EXTENSION_DISPLAY_NAME}: Select Skills`, canPickMany: true });
   if (!selected) {
     return;
   }
   await setActiveSkillIds(context, selected.map((item) => item.label));
-  await vscode7.window.showInformationMessage(`Pionus Codex active skills: ${selected.length}.`);
+  await vscode7.window.showInformationMessage(`${EXTENSION_DISPLAY_NAME}: ${selected.length} active skills.`);
 }
 async function runCliExec() {
   const enabled = await ensureCliBridgeEnabled();
@@ -17121,7 +17124,7 @@ ${formatContextSnapshot(collectContextSnapshot(config))}`,
     imagePaths: imageUris?.map((uri) => uri.fsPath),
     enableSearch
   });
-  launchTerminal("Pionus Codex Exec", toShellCommand(command), getPrimaryWorkspaceFolder());
+  launchTerminal(`${EXTENSION_DISPLAY_NAME}: Codex CLI Exec`, toShellCommand(command), getPrimaryWorkspaceFolder());
 }
 async function runCliReview() {
   const enabled = await ensureCliBridgeEnabled();
@@ -17150,14 +17153,14 @@ async function runCliReview() {
   });
   const request = { mode: mode.requestMode, target, instructions };
   const command = buildReviewCliCommand(getProviderConfig(), request);
-  launchTerminal(`Pionus Codex Review: ${describeReviewRequest(request)}`, toShellCommand(command), getPrimaryWorkspaceFolder());
+  launchTerminal(`${EXTENSION_DISPLAY_NAME}: Codex CLI Review: ${describeReviewRequest(request)}`, toShellCommand(command), getPrimaryWorkspaceFolder());
 }
 async function ensureCliBridgeEnabled() {
   const config = getProviderConfig();
   if (config.enableCliBridge) {
     return true;
   }
-  const action = await vscode7.window.showWarningMessage("Pionus Codex CLI bridge is disabled.", "Enable and Run", "Open Settings");
+  const action = await vscode7.window.showWarningMessage(`${EXTENSION_DISPLAY_NAME}: Codex CLI bridge is disabled.`, "Enable and Run", "Open Settings");
   if (action === "Enable and Run") {
     await vscode7.workspace.getConfiguration(getConfigurationSection()).update("enableCliBridge", true, vscode7.ConfigurationTarget.Global);
     return true;
