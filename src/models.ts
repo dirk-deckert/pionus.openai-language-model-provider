@@ -1,9 +1,8 @@
 import * as vscode from 'vscode';
-import type { ProviderConfig, ReasoningEffort } from './config.js';
+import type { ProviderConfig, ReasoningEffort, ServiceTier } from './config.js';
 import {
   findModelDefinition,
   findOpenAIModelCatalogEntry,
-  getCompatibilityFallbackDefinitions,
   type ModelDefinition,
   type OpenAIModelCatalogEntry
 } from './modelCatalog.js';
@@ -12,7 +11,7 @@ import { normalizeBaseURL } from './urlUtils.js';
 
 const PROVIDER_MODEL_ID_PREFIX = 'codex::';
 const REASONING_ID_DELIMITER = '::reasoning=';
-const FAST_ID_SUFFIX = '::tier=fast';
+const TIER_ID_DELIMITER = '::tier=';
 const DEFAULT_INPUT_LIMIT = 272_000;
 
 const REASONING_LABELS: Record<ReasoningEffort, string> = {
@@ -63,7 +62,7 @@ export interface ProviderModelMetadata {
   imageInput: boolean;
   toolCalling: boolean;
   streaming: boolean;
-  /** Informational only: Fast IDs remain available for compatibility. */
+  /** Controls whether explicit Normal and Fast picker entries can be offered. */
   fastTierAvailability: 'advertised' | 'not-advertised' | 'unknown';
   supportedReasoningEfforts: readonly ReasoningEffort[];
   /** Whether the endpoint/catalog authoritatively enumerated the supported efforts. */
@@ -79,14 +78,14 @@ export interface ResolvedProviderModel {
   info: vscode.LanguageModelChatInformation;
   requestModel: string;
   reasoningEffort?: ReasoningEffort;
-  serviceTier?: 'fast';
+  serviceTier?: ServiceTier;
   metadata: ProviderModelMetadata;
 }
 
 export interface ParsedModelIdentifier {
   requestModel: string;
   reasoningEffort?: ReasoningEffort;
-  serviceTier?: 'fast';
+  serviceTier?: ServiceTier;
 }
 
 type ModelLimitConfig = Pick<ProviderConfig, 'model' | 'maxOutputTokens'>;
@@ -117,7 +116,9 @@ export async function fetchAvailableModels(
 
     const payload = await response.json() as { models?: unknown; data?: unknown };
     const values = Array.isArray(payload.models) ? payload.models : Array.isArray(payload.data) ? payload.data : [];
-    return values.filter((value): value is UpstreamModel => typeof value === 'object' && value !== null).filter(isModelVisible);
+    return values
+      .filter((value): value is UpstreamModel => typeof value === 'object' && value !== null)
+      .filter((model) => isModelVisible(model, target));
   } finally {
     cancellation.dispose();
   }
@@ -137,7 +138,7 @@ export function buildProviderModels(
     return resolved ? [resolved] : [];
   }));
   if (metadata.length > 0) {
-    return deduplicateModels(metadata.flatMap((model) => buildModelVariants(config, model)));
+    return metadata.flatMap((model) => buildModelVariants(config, model));
   }
 
   // A successful OpenAI discovery is a strict account/catalog intersection.
@@ -151,19 +152,11 @@ export function buildFallbackModels(
 ): ResolvedProviderModel[] {
   if (target === 'openai') {
     const metadata = resolveModelMetadata(config.model, target, config);
-    return metadata?.streaming ? buildModelVariants(config, metadata) : [];
+    return metadata?.streaming ? [buildModel(metadata, config.defaultServiceTier)] : [];
   }
 
-  const fallbackDefinitions = getCompatibilityFallbackDefinitions();
-  const pinnedModels = fallbackDefinitions.flatMap((definition) => buildModelVariants(config, buildFallbackMetadata(config, definition)));
-  if (fallbackDefinitions.some((definition) => definition.id === config.model)) {
-    return pinnedModels;
-  }
-
-  return [
-    ...buildModelVariants(config, buildFallbackMetadata(config, config.model)),
-    ...pinnedModels
-  ];
+  const definition = findModelDefinition(config.model) ?? config.model;
+  return [buildModel(buildFallbackMetadata(config, definition), config.defaultServiceTier)];
 }
 
 /**
@@ -194,10 +187,13 @@ export function resolveModelMetadata(
 
 export function parseModelIdentifier(modelId: string): ParsedModelIdentifier {
   let normalized = modelId.startsWith(PROVIDER_MODEL_ID_PREFIX) ? modelId.slice(PROVIDER_MODEL_ID_PREFIX.length) : modelId;
-  let serviceTier: 'fast' | undefined;
-  if (normalized.endsWith(FAST_ID_SUFFIX)) {
-    serviceTier = 'fast';
-    normalized = normalized.slice(0, -FAST_ID_SUFFIX.length);
+  let serviceTier: ServiceTier | undefined;
+  const tierIndex = normalized.lastIndexOf(TIER_ID_DELIMITER);
+  if (tierIndex >= 0) {
+    serviceTier = normalizeServiceTier(normalized.slice(tierIndex + TIER_ID_DELIMITER.length));
+    if (serviceTier) {
+      normalized = normalized.slice(0, tierIndex);
+    }
   }
 
   const delimiterIndex = normalized.indexOf(REASONING_ID_DELIMITER);
@@ -303,60 +299,53 @@ function buildFallbackMetadata(
 }
 
 function buildModelVariants(config: ProviderConfig, metadata: ProviderModelMetadata): ResolvedProviderModel[] {
-  const reasoningOptions = deduplicateReasoning(metadata.supportedReasoningEfforts).map(toReasoningOption);
-  const common = { config, metadata, reasoningOptions };
-  return [
-    buildModel({ ...common }),
-    buildModel({ ...common, name: `${metadata.name} Fast`, serviceTier: 'fast' }),
-    ...reasoningOptions.map((option) => buildModel({
-      ...common,
-      name: `${metadata.name} (${REASONING_LABELS[option.effort]})`,
-      explicitReasoningEffort: option.effort
-    }))
-  ];
+  if (metadata.fastTierAvailability === 'advertised') {
+    return [buildModel(metadata, 'default'), buildModel(metadata, 'fast')];
+  }
+  if (metadata.fastTierAvailability === 'not-advertised') {
+    return [buildModel(metadata, 'default')];
+  }
+  return [buildModel(metadata, config.defaultServiceTier)];
 }
 
-function buildModel(options: {
-  config: ProviderConfig;
-  metadata: ProviderModelMetadata;
-  reasoningOptions: ReasoningOption[];
-  name?: string;
-  explicitReasoningEffort?: ReasoningEffort;
-  serviceTier?: 'fast';
-}): ResolvedProviderModel {
-  const configurationSchema = options.reasoningOptions.length > 1
-    ? buildThinkingEffortSchema(options.reasoningOptions, options.metadata.defaultReasoningEffort ?? options.reasoningOptions[0]?.effort)
-    : undefined;
-  const id = `${PROVIDER_MODEL_ID_PREFIX}${options.metadata.requestModel}`
-    + (options.explicitReasoningEffort ? `${REASONING_ID_DELIMITER}${options.explicitReasoningEffort}` : '')
-    + (options.serviceTier === 'fast' ? FAST_ID_SUFFIX : '');
+function buildModel(metadata: ProviderModelMetadata, serviceTier?: ServiceTier): ResolvedProviderModel {
+  const reasoningOptions = deduplicateReasoning(metadata.supportedReasoningEfforts).map(toReasoningOption);
+  const configurationSchema = buildModelConfigurationSchema(
+    reasoningOptions,
+    metadata.defaultReasoningEffort ?? reasoningOptions[0]?.effort
+  );
+  const tierLabel = serviceTier === 'fast' ? 'Fast' : serviceTier === 'default' ? 'Normal' : 'Auto';
+  const tierSuffix = serviceTier ? `${TIER_ID_DELIMITER}${serviceTier}` : '';
   const info = {
-    id,
-    name: options.name ?? options.metadata.name,
-    family: options.metadata.requestModel,
-    version: options.metadata.version,
-    maxInputTokens: options.metadata.maxInputTokens,
-    maxOutputTokens: options.metadata.maxOutputTokens,
-    tooltip: options.metadata.tooltip,
-    detail: buildModelDetail(options.metadata, options.reasoningOptions, options.explicitReasoningEffort, options.serviceTier),
+    id: `${PROVIDER_MODEL_ID_PREFIX}${metadata.requestModel}${tierSuffix}`,
+    name: `${metadata.name} (${tierLabel})`,
+    family: metadata.requestModel,
+    version: metadata.version,
+    maxInputTokens: metadata.maxInputTokens,
+    maxOutputTokens: metadata.maxOutputTokens,
+    tooltip: metadata.tooltip,
+    detail: buildModelDetail(metadata, reasoningOptions, tierLabel),
     capabilities: {
-      imageInput: options.metadata.imageInput,
-      toolCalling: options.metadata.toolCalling
+      imageInput: metadata.imageInput,
+      toolCalling: metadata.toolCalling
     },
     ...(configurationSchema ? { configurationSchema } : {})
   } as vscode.LanguageModelChatInformation;
   return {
     info,
-    requestModel: options.metadata.requestModel,
-    reasoningEffort: options.explicitReasoningEffort ?? options.metadata.defaultReasoningEffort,
-    serviceTier: options.serviceTier,
-    metadata: options.metadata
+    requestModel: metadata.requestModel,
+    reasoningEffort: metadata.defaultReasoningEffort,
+    serviceTier,
+    metadata
   };
 }
 
-function buildThinkingEffortSchema(reasoningOptions: ReasoningOption[], defaultEffort: ReasoningEffort | undefined) {
-  return {
-    properties: {
+function buildModelConfigurationSchema(
+  reasoningOptions: ReasoningOption[],
+  defaultEffort: ReasoningEffort | undefined
+) {
+  const properties = {
+    ...(reasoningOptions.length > 1 ? {
       reasoningEffort: {
         type: 'string',
         title: 'Thinking Effort',
@@ -366,7 +355,14 @@ function buildThinkingEffortSchema(reasoningOptions: ReasoningOption[], defaultE
         default: defaultEffort ?? reasoningOptions[0]?.effort,
         group: 'navigation'
       }
-    }
+    } : {})
+  };
+
+  if (Object.keys(properties).length === 0) {
+    return undefined;
+  }
+  return {
+    properties
   };
 }
 
@@ -420,8 +416,7 @@ function getReasoningDescription(effort: ReasoningEffort): string {
 function buildModelDetail(
   metadata: ProviderModelMetadata,
   reasoningOptions: ReasoningOption[],
-  explicitReasoningEffort: ReasoningEffort | undefined,
-  serviceTier: 'fast' | undefined
+  tierLabel: 'Normal' | 'Fast' | 'Auto'
 ): string {
   const parts = [metadata.contextWindowTokens
     ? `Context: ${metadata.contextWindowTokens.toLocaleString()} tokens`
@@ -429,22 +424,10 @@ function buildModelDetail(
   parts.push(`Max output: ${metadata.maxOutputTokens.toLocaleString()} tokens`);
   if (reasoningOptions.length > 0) {
     const labels = reasoningOptions.map((option) => REASONING_LABELS[option.effort]).join(', ');
-    const selected = explicitReasoningEffort ?? metadata.defaultReasoningEffort;
-    parts.push(selected ? `Thinking: ${labels} (selected: ${REASONING_LABELS[selected]})` : `Thinking: ${labels}`);
+    const selected = metadata.defaultReasoningEffort;
+    parts.push(selected ? `Thinking: ${labels} (default: ${REASONING_LABELS[selected]})` : `Thinking: ${labels}`);
   }
-  if (serviceTier === 'fast') {
-    switch (metadata.fastTierAvailability) {
-      case 'advertised':
-        parts.push('Fast tier (advertised by endpoint)');
-        break;
-      case 'not-advertised':
-        parts.push('Fast tier (compatibility option; not advertised by endpoint)');
-        break;
-      case 'unknown':
-        parts.push('Fast tier (compatibility option; availability unknown)');
-        break;
-    }
-  }
+  parts.push(`Service tier: ${tierLabel}`);
   return parts.join(' | ');
 }
 
@@ -498,17 +481,6 @@ function deduplicateMetadata(models: readonly ProviderModelMetadata[]): Provider
   });
 }
 
-function deduplicateModels(models: readonly ResolvedProviderModel[]): ResolvedProviderModel[] {
-  const seen = new Set<string>();
-  return models.filter((model) => {
-    if (seen.has(model.info.id)) {
-      return false;
-    }
-    seen.add(model.info.id);
-    return true;
-  });
-}
-
 function deduplicateReasoning(values: readonly ReasoningEffort[]): ReasoningEffort[] {
   return [...new Set(values)];
 }
@@ -525,9 +497,12 @@ function formatDisplayName(model: string): string {
   }).join('-');
 }
 
-function isModelVisible(model: UpstreamModel): boolean {
-  if (model.supported_in_api === false) {
+function isModelVisible(model: UpstreamModel, target: ModelDiscoveryTarget): boolean {
+  if (target === 'openai' && model.supported_in_api === false) {
     return false;
+  }
+  if (target === 'chatgpt' && getString(model.slug)?.toLowerCase() === 'codex-auto-review') {
+    return true;
   }
   const visibility = getString(model.visibility)?.toLowerCase();
   return visibility !== 'hidden' && visibility !== 'hide';
@@ -547,6 +522,10 @@ function normalizeReasoningEffort(value: unknown): ReasoningEffort | undefined {
     default:
       return undefined;
   }
+}
+
+function normalizeServiceTier(value: unknown): ServiceTier | undefined {
+  return value === 'default' || value === 'fast' ? value : undefined;
 }
 
 function getString(value: unknown): string | undefined {

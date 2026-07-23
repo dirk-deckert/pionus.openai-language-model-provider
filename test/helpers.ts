@@ -7,6 +7,7 @@ export const baseConfig = {
   model: 'gpt-5.6-sol',
   instructions: 'You are a helpful coding assistant integrated with VS Code.',
   defaultReasoningEffort: undefined,
+  defaultServiceTier: undefined,
   maxOutputTokens: 8192,
   enableImageInput: true,
   includeIdeContext: true,

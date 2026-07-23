@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.1.6
+
+- Show the active service tier directly in Copilot Chat model names as
+  **(Normal)**, **(Fast)**, or **(Auto)**.
+- Offer separate Normal and Fast entries only when model discovery advertises
+  priority processing; keep reasoning effort solely in the Thinking control.
+- Make an encoded tier authoritative so the displayed picker label always
+  matches the Responses request.
+
+## 0.1.5
+
+- Add `pionus.codex.defaultServiceTier` with `auto`, `default`, and `fast`
+  choices so priority processing remains accessible when Copilot Chat does not
+  render the provider's per-model Speed control.
+- Let an explicit per-model Speed selection override the global service-tier
+  default while preserving legacy Fast model IDs.
+
+## 0.1.4
+
+- Expose one picker entry per discovered model and move reasoning effort and
+  advertised priority speed into model-specific controls.
+- Preserve legacy reasoning and Fast model IDs for persisted selections without
+  advertising duplicate picker entries.
+- Make discovery visibility credential-aware so ChatGPT-only Codex Spark and
+  the upstream Auto Review exception are retained while other hidden models
+  remain excluded.
+- Advertise only the configured model when discovery is unavailable.
+
 ## 0.1.3
 
 - Attempt exact input-token counting for ChatGPT Codex, with a ten-minute

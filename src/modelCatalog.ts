@@ -208,8 +208,8 @@ export const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     reviewedAt: OPENAI_MODEL_CATALOG_REVIEWED_AT
   },
   {
-    id: 'gpt-5.3-codex-spark-preview',
-    aliases: [],
+    id: 'gpt-5.3-codex-spark',
+    aliases: ['gpt-5.3-codex-spark-preview'],
     openAI: false,
     fallback: { defaultReasoningEffort: 'high' }
   },

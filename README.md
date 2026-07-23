@@ -21,13 +21,31 @@ Discovery is endpoint-specific:
 - The official OpenAI API supplies model IDs through `/v1/models`. Only IDs that intersect the reviewed GPT-5.6/5.5/5.4 catalog receive built-in capabilities and limits.
 - Custom Responses-compatible endpoints remain supported. Their model discovery accepts both `id` and `slug`, deduplicates results, and uses conservative capabilities when verified metadata is unavailable.
 
-Existing model identifiers remain valid. The picker exposes a compact set of entries:
+The picker keeps reasoning separate from model identity while making the
+service tier visible in the chat window:
 
-- `codex::<model>` selects the model's default reasoning effort.
-- `codex::<model>::reasoning=<effort>` selects one supported effort without changing the underlying model.
-- `codex::<model>::tier=fast` requests the priority service tier at the model's default effort.
+- **Thinking Effort** contains only the reasoning levels advertised for that model.
+- Models that advertise priority processing have explicit **(Normal)** and **(Fast)** entries.
+- Models that advertise only the standard tier have one **(Normal)** entry.
+- Models whose tier support is unknown have one **(Auto)** entry unless a global tier is configured.
 
-Fast is a compatibility transport option, not a promise that an account or endpoint has priority-tier entitlement. An unsupported priority request is reported by the backend. Fast/reasoning cross-product entries are deliberately not generated.
+Legacy `codex::<model>::reasoning=<effort>` and `codex::<model>::tier=fast`
+identifiers remain request-compatible for persisted selections and agent
+profiles. Reasoning variants are no longer advertised as duplicate picker
+entries. If discovery is unavailable, only the configured fallback model is
+advertised.
+
+Copilot Chat does not provide language-model providers with a separate,
+always-visible tier badge. Pionus therefore includes the tier in the model
+name. For fallback models and endpoints whose tier metadata is unknown, set
+`pionus.codex.defaultServiceTier` to `auto`, `default`, or `fast` in VS Code
+Settings. An explicit **(Normal)** or **(Fast)** picker entry is authoritative
+and takes precedence over this default.
+
+ChatGPT discovery treats visibility and API support independently: models such
+as GPT-5.3 Codex Spark that are unavailable to API-key credentials remain
+eligible with ChatGPT credentials, and the upstream Codex Auto Review exception
+is preserved. Other hidden models remain excluded.
 
 For cataloged OpenAI API models, VS Code receives the reviewed input limit, maximum output, image-input support, and tool-calling support. The `pionus.codex.maxOutputTokens` setting remains a per-request cap and is clamped to the effective model's maximum. If an agent profile changes the requested model, the provider resolves capabilities for that effective model before applying image, reasoning, and output limits.
 
@@ -40,7 +58,7 @@ For cataloged OpenAI API models, VS Code receives the reviewed input limit, maxi
 - Permission, missing-model, and rate-limit/quota failures map to the closest VS Code language-model error. Transport, malformed-stream, incomplete, and server failures retain their original cause.
 - Token counting attempts the Responses input-token endpoint for ChatGPT Codex, OpenAI API, and custom endpoints. Definitively unsupported endpoints are remembered for ten minutes; all unsupported or unavailable cases retain the conservative local estimate. Message and image conversion follows the same policy for counting and requests.
 
-Reasoning presentation uses a guarded VS Code thinking part when the runtime provides it. Stable VS Code currently has no reasoning response part, so reasoning is not converted into ordinary answer text or a proprietary data part. Explicit reasoning model variants remain the stable selection mechanism on runtimes without that API.
+Reasoning presentation uses a guarded VS Code thinking part when the runtime provides it. Stable VS Code currently has no reasoning response part, so reasoning is not converted into ordinary answer text or a proprietary data part. This response-rendering limitation is independent of the model's Thinking Effort request control.
 
 Each request is intentionally stateless (`store: false`) and does not use `previous_response_id`. Copilot supplies the complete conversation history in each provider request, so the provider does not maintain a second conversation state.
 
