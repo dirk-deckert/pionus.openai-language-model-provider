@@ -12,7 +12,7 @@ import {
   type ProviderModelMetadata,
   type ResolvedProviderModel
 } from './models.js';
-import { clampOutputTokens, ensureSupportedReasoningEffort, resolveReasoningEffort, type RuntimeModelOptions } from './providerOptions.js';
+import { clampOutputTokens, ensureSupportedReasoningEffort, resolveReasoningEffort, resolveServiceTier, type RuntimeModelOptions } from './providerOptions.js';
 import { countInputTokens, ResponsesTransportError, streamResponseText } from './responsesClient.js';
 import { normalizeBaseURL } from './urlUtils.js';
 import { classifyCredentialTarget, getApiCredentials } from './secrets.js';
@@ -133,7 +133,11 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
     }
     const profileModel = agentProfile?.model ? parseModelIdentifier(agentProfile.model) : undefined;
     const requestModel = profileModel?.requestModel ?? selectedModel.requestModel;
-    const serviceTier = profileModel?.serviceTier ?? selectedModel.serviceTier;
+    const serviceTier = resolveServiceTier({
+      runtimeOptions: options as RuntimeModelOptions,
+      selectedVariant: profileModel?.serviceTier ?? selectedModel.serviceTier,
+      globalDefault: config.defaultServiceTier
+    });
     const metadata = this.resolveRequestModelMetadata(requestModel, target, config);
     if (!metadata || !metadata.streaming) {
       throw vscode.LanguageModelError.NotFound(`The effective model "${requestModel}" is not available as a streaming language model for this endpoint.`);
@@ -419,8 +423,8 @@ export class CodexModelProvider implements vscode.LanguageModelChatProvider {
   }
 }
 
-function getRequestServiceTier(serviceTier: 'fast' | undefined): 'priority' | undefined {
-  return serviceTier === 'fast' ? 'priority' : undefined;
+function getRequestServiceTier(serviceTier: 'default' | 'fast' | undefined): 'default' | 'priority' | undefined {
+  return serviceTier === 'fast' ? 'priority' : serviceTier;
 }
 
 function createThinkingPart(text: string): vscode.LanguageModelResponsePart | undefined {

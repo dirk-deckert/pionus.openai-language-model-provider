@@ -31,6 +31,7 @@ const EXISTING_SETTING_DEFAULTS: Readonly<Record<string, unknown>> = {
   'pionus.codex.defaultExecutionProfile': 'codex-execute',
   'pionus.codex.defaultPlanningProfile': 'codex-plan',
   'pionus.codex.defaultReasoningEffort': 'auto',
+  'pionus.codex.defaultServiceTier': 'auto',
   'pionus.codex.enableAgentProfiles': true,
   'pionus.codex.enableCliBridge': false,
   'pionus.codex.enableImageInput': true,
@@ -63,14 +64,14 @@ interface ManifestSetting {
   scope?: string;
 }
 
-test('manifest preserves stable IDs in the 0.1.3 release', async () => {
+test('manifest preserves stable IDs in the 0.1.6 release', async () => {
   const manifest = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')) as Record<string, any>;
 
   assert.equal(`${manifest.publisher}.${manifest.name}`, 'pionus.openai-language-model-provider');
   assert.equal(manifest.name, 'openai-language-model-provider');
   assert.equal(manifest.displayName, 'Pionus OpenAI Language Model Provider');
   assert.equal(manifest.publisher, 'pionus');
-  assert.equal(manifest.version, '0.1.3');
+  assert.equal(manifest.version, '0.1.6');
   assert.equal(manifest.main, './dist/extension.js');
   assert.equal(manifest.engines.vscode, '^1.104.0');
 
@@ -91,7 +92,7 @@ test('manifest preserves stable IDs in the 0.1.3 release', async () => {
 
   assert.equal(manifest.contributes.configuration.title, 'Pionus OpenAI Language Model Provider');
   const properties = manifest.contributes.configuration.properties as Record<string, ManifestSetting>;
-  assert.equal(Object.keys(properties).length, 26, 'the extension must expose exactly the existing 26 settings');
+  assert.equal(Object.keys(properties).length, 27, 'the extension must expose the existing settings plus defaultServiceTier');
   assert.deepEqual(Object.keys(properties).sort(), Object.keys(EXISTING_SETTING_DEFAULTS).sort());
   assert.deepEqual(
     Object.fromEntries(Object.entries(properties).map(([setting, schema]) => [setting, schema.default])),

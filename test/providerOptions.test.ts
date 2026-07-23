@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { clampOutputTokens, ensureSupportedReasoningEffort, resolveReasoningEffort } from '../src/providerOptions.js';
+import { clampOutputTokens, ensureSupportedReasoningEffort, resolveReasoningEffort, resolveServiceTier } from '../src/providerOptions.js';
 
 test('reasoning selection follows runtime, model, variant, profile, global, and backend precedence', () => {
   const defaults = {
@@ -27,6 +27,29 @@ test('reasoning selection follows runtime, model, variant, profile, global, and 
     runtimeOptions: { modelConfiguration: { reasoningEffort: 'unsupported' } },
     selectedVariant: 'low'
   }), 'low');
+});
+
+test('visible tier variants are authoritative before runtime and global fallbacks', () => {
+  assert.equal(resolveServiceTier({
+    runtimeOptions: { modelConfiguration: { serviceTier: 'fast' } }
+  }), 'fast');
+  assert.equal(resolveServiceTier({
+    runtimeOptions: { modelConfiguration: { serviceTier: 'normal' } },
+    selectedVariant: 'fast'
+  }), 'fast');
+  assert.equal(resolveServiceTier({
+    runtimeOptions: { modelConfiguration: { serviceTier: 'fast' } },
+    selectedVariant: 'default',
+    globalDefault: 'fast'
+  }), 'default');
+  assert.equal(resolveServiceTier({ runtimeOptions: {}, selectedVariant: 'fast' }), 'fast');
+  assert.equal(resolveServiceTier({ runtimeOptions: {}, globalDefault: 'fast' }), 'fast');
+  assert.equal(resolveServiceTier({ runtimeOptions: {}, globalDefault: 'default' }), 'default');
+  assert.equal(resolveServiceTier({
+    runtimeOptions: { modelConfiguration: { serviceTier: 'normal' } },
+    globalDefault: 'fast'
+  }), 'default');
+  assert.equal(resolveServiceTier({ runtimeOptions: { modelConfiguration: { serviceTier: 'unsupported' } } }), undefined);
 });
 
 test('output token limit is clamped only when the model maximum is known', () => {

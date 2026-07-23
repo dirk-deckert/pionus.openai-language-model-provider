@@ -1,4 +1,4 @@
-import type { ReasoningEffort } from './config.js';
+import type { ReasoningEffort, ServiceTier } from './config.js';
 
 export interface RuntimeModelOptions {
   readonly modelConfiguration?: Record<string, unknown>;
@@ -14,6 +14,12 @@ export interface ReasoningSelection {
   modelDefault?: ReasoningEffort;
 }
 
+export interface ServiceTierSelection {
+  runtimeOptions: RuntimeModelOptions;
+  selectedVariant?: ServiceTier;
+  globalDefault?: ServiceTier;
+}
+
 export function resolveReasoningEffort(selection: ReasoningSelection): ReasoningEffort | undefined {
   const reasoningOptions = selection.runtimeOptions.modelOptions?.reasoning;
   return normalizeReasoningEffort(selection.runtimeOptions.modelConfiguration?.reasoningEffort)
@@ -24,6 +30,21 @@ export function resolveReasoningEffort(selection: ReasoningSelection): Reasoning
     ?? selection.agentProfile
     ?? selection.globalDefault
     ?? selection.modelDefault;
+}
+
+export function resolveServiceTier(selection: ServiceTierSelection): ServiceTier | undefined {
+  // An encoded picker entry must be authoritative so its visible Normal/Fast
+  // label always matches the request sent to the backend.
+  if (selection.selectedVariant) {
+    return selection.selectedVariant;
+  }
+  const runtimeTier = normalizeServiceTier(selection.runtimeOptions.modelConfiguration?.serviceTier)
+    ?? normalizeServiceTier(selection.runtimeOptions.configuration?.serviceTier)
+    ?? normalizeServiceTier(selection.runtimeOptions.modelOptions?.serviceTier);
+  if (runtimeTier === 'normal') {
+    return 'default';
+  }
+  return runtimeTier ?? selection.globalDefault;
 }
 
 export function clampOutputTokens(configuredLimit: number, modelMaximum: number | undefined): number {
@@ -62,4 +83,8 @@ function normalizeReasoningEffort(value: unknown): ReasoningEffort | undefined {
     default:
       return undefined;
   }
+}
+
+function normalizeServiceTier(value: unknown): 'normal' | 'fast' | undefined {
+  return value === 'normal' || value === 'fast' ? value : undefined;
 }

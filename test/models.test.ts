@@ -10,32 +10,52 @@ import {
 import { buildProviderModels, fetchAvailableModels, parseModelIdentifier, resolveModelMetadata } from '../src/models.js';
 import { baseConfig } from './helpers.js';
 
-test('default discovery remains backward compatible with ChatGPT slug payloads', () => {
+type ModelConfigurationSchema = {
+  properties?: {
+    reasoningEffort?: { enum?: string[]; default?: string };
+  };
+};
+
+function getConfigurationSchema(model: ReturnType<typeof buildProviderModels>[number] | undefined): ModelConfigurationSchema | undefined {
+  type ModelInfo = NonNullable<typeof model>['info'];
+  return (model?.info as ModelInfo & { configurationSchema?: ModelConfigurationSchema } | undefined)?.configurationSchema;
+}
+
+test('default discovery exposes visible tiers without duplicating reasoning efforts', () => {
   const models = buildProviderModels(baseConfig, [
-    { slug: 'gpt-5.6-sol', display_name: 'GPT-5.6-Sol', context_window: 372000, service_tiers: ['normal', 'fast'] },
-    { slug: 'gpt-5.5', display_name: 'Codex 5.5', context_window: 272000 }
+    {
+      slug: 'gpt-5.6-sol',
+      display_name: 'GPT-5.6-Sol',
+      context_window: 372000,
+      service_tiers: ['normal', 'fast'],
+      default_reasoning_level: 'medium',
+      supported_reasoning_levels: ['low', 'medium', 'high']
+    },
+    { slug: 'gpt-5.5', display_name: 'Codex 5.5', context_window: 272000, service_tiers: ['normal'] }
   ]);
 
-  assert.deepEqual(models.slice(0, 2).map((model) => model.info.id), [
-    'codex::gpt-5.6-sol',
-    'codex::gpt-5.6-sol::tier=fast'
+  assert.deepEqual(models.map((model) => model.info.id), [
+    'codex::gpt-5.6-sol::tier=default',
+    'codex::gpt-5.6-sol::tier=fast',
+    'codex::gpt-5.5::tier=default'
   ]);
-  assert.ok(models.some((model) => model.info.id === 'codex::gpt-5.6-sol::reasoning=low'));
-  assert.ok(models.some((model) => model.info.id === 'codex::gpt-5.5::reasoning=medium'));
-  assert.ok(!models.some((model) => model.info.id.includes('::reasoning=') && model.info.id.includes('::tier=fast')));
+  assert.deepEqual(models.map((model) => model.info.name), [
+    'GPT-5.6-Sol (Normal)',
+    'GPT-5.6-Sol (Fast)',
+    'Codex 5.5 (Normal)'
+  ]);
+  const schema = getConfigurationSchema(models[0]);
+  assert.deepEqual(schema?.properties?.reasoningEffort?.enum, ['medium', 'low', 'high']);
 });
 
-test('fallback models retain every pre-0.1 base and Fast identifier', () => {
+test('fallback advertises only the configured model while retaining legacy ID parsing', () => {
   const models = buildProviderModels(baseConfig, []);
-  const ids = new Set(models.map((model) => model.info.id));
-
-  for (const requestModel of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini']) {
-    assert.ok(ids.has(`codex::${requestModel}`), `missing base entry for ${requestModel}`);
-    assert.ok(ids.has(`codex::${requestModel}::tier=fast`), `missing Fast entry for ${requestModel}`);
-  }
-  assert.equal(models.find((model) => model.info.id === 'codex::gpt-5.6-sol')?.info.maxInputTokens, 272_000);
-  assert.equal(ids.size, models.length, 'fallback provider IDs must be unique');
+  assert.deepEqual(models.map((model) => model.info.id), ['codex::gpt-5.6-sol']);
+  assert.equal(models[0]?.info.name, 'GPT-5.6-Sol (Auto)');
+  assert.equal(models[0]?.info.maxInputTokens, 272_000);
   assert.equal(parseModelIdentifier('codex::gpt-5.6-sol::tier=fast').serviceTier, 'fast');
+  assert.equal(parseModelIdentifier('codex::gpt-5.6-sol::tier=default').serviceTier, 'default');
+  assert.equal(parseModelIdentifier('codex::gpt-5.6-sol::reasoning=high').reasoningEffort, 'high');
 });
 
 test('one model registry derives unique catalog and ordered compatibility fallbacks', () => {
@@ -55,7 +75,7 @@ test('one model registry derives unique catalog and ordered compatibility fallba
   assert.equal(OPENAI_MODEL_CATALOG.find((entry) => entry.id === 'gpt-5.6-sol')?.defaultReasoningEffort, 'medium');
 });
 
-test('ChatGPT discovery records service-tier availability without removing compatibility Fast entries', () => {
+test('ChatGPT discovery exposes tier labels only when supported or configured', () => {
   const models = buildProviderModels(baseConfig, [
     { slug: 'advertised', service_tiers: ['normal', 'fast'] },
     { slug: 'nested-priority', supported_service_tiers: [{ tier: 'priority' }] },
@@ -63,15 +83,51 @@ test('ChatGPT discovery records service-tier availability without removing compa
     { slug: 'unknown' }
   ], 'chatgpt');
 
-  const base = (requestModel: string) => models.find((model) => model.info.id === `codex::${requestModel}`);
-  const fast = (requestModel: string) => models.find((model) => model.info.id === `codex::${requestModel}::tier=fast`);
-  assert.equal(base('advertised')?.metadata.fastTierAvailability, 'advertised');
-  assert.equal(base('nested-priority')?.metadata.fastTierAvailability, 'advertised');
-  assert.equal(base('not-advertised')?.metadata.fastTierAvailability, 'not-advertised');
-  assert.equal(base('unknown')?.metadata.fastTierAvailability, 'unknown');
-  assert.match(fast('advertised')?.info.detail ?? '', /advertised by endpoint/);
-  assert.match(fast('not-advertised')?.info.detail ?? '', /not advertised by endpoint/);
-  assert.match(fast('unknown')?.info.detail ?? '', /availability unknown/);
+  assert.deepEqual(models.map((model) => model.info.id), [
+    'codex::advertised::tier=default',
+    'codex::advertised::tier=fast',
+    'codex::nested-priority::tier=default',
+    'codex::nested-priority::tier=fast',
+    'codex::not-advertised::tier=default',
+    'codex::unknown'
+  ]);
+  assert.deepEqual(models.map((model) => model.info.name), [
+    'Advertised (Normal)',
+    'Advertised (Fast)',
+    'Nested-Priority (Normal)',
+    'Nested-Priority (Fast)',
+    'Not-Advertised (Normal)',
+    'Unknown (Auto)'
+  ]);
+  assert.match(models[1]?.info.detail ?? '', /Service tier: Fast/);
+  assert.match(models[5]?.info.detail ?? '', /Service tier: Auto/);
+});
+
+test('discovery visibility is credential-target aware and preserves Auto Review', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ models: [
+    { slug: 'gpt-5.3-codex-spark', visibility: 'list', supported_in_api: false },
+    { slug: 'codex-auto-review', visibility: 'hide', supported_in_api: true },
+    { slug: 'other-hidden', visibility: 'hide', supported_in_api: true }
+  ] }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof fetch;
+  const credentials = { apiKey: 'fake', headers: {}, source: 'secretStorage', omitMaxOutputTokens: false } as const;
+  const token = {
+    isCancellationRequested: false,
+    onCancellationRequested: () => ({ dispose: () => undefined })
+  } as never;
+
+  try {
+    assert.deepEqual((await fetchAvailableModels(baseConfig, credentials, token, 'chatgpt')).map((model) => model.slug), [
+      'gpt-5.3-codex-spark',
+      'codex-auto-review'
+    ]);
+    assert.deepEqual(await fetchAvailableModels(baseConfig, credentials, token, 'openai'), []);
+    assert.deepEqual((await fetchAvailableModels(baseConfig, credentials, token, 'custom')).map((model) => model.slug), [
+      'gpt-5.3-codex-spark'
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('endpoint-specific parsing uses ChatGPT slug, OpenAI id, and custom id-or-slug', () => {
@@ -131,14 +187,11 @@ test('OpenAI discovery intersects exact account ids with the reviewed catalog an
   const ids = models.map((model) => model.info.id);
 
   assert.equal(new Set(ids).size, ids.length);
+  assert.equal(ids.length, 2);
   assert.deepEqual([...new Set(models.map((model) => model.requestModel))], ['gpt-5.6-sol', 'gpt-5.4-mini']);
   assert.ok(ids.includes('codex::gpt-5.6-sol'));
-  assert.ok(ids.includes('codex::gpt-5.6-sol::tier=fast'));
-  assert.ok(ids.includes('codex::gpt-5.6-sol::reasoning=max'));
-  assert.ok(ids.includes('codex::gpt-5.4-mini::reasoning=none'));
   assert.ok(!ids.some((id) => id.includes('gpt-unknown')));
   assert.ok(!ids.some((id) => id.includes('gpt-5.5')));
-  assert.ok(!ids.some((id) => id.includes('::reasoning=') && id.includes('::tier=fast')));
 
   const sol = models.find((model) => model.info.id === 'codex::gpt-5.6-sol');
   const mini = models.find((model) => model.info.id === 'codex::gpt-5.4-mini');
@@ -181,7 +234,8 @@ test('custom discovery accepts id and slug, deduplicates, and keeps conservative
   assert.equal(vision?.info.maxInputTokens, 80_000);
   assert.equal(vision?.info.maxOutputTokens, 6_000);
   assert.equal(vision?.info.capabilities?.imageInput, true);
-  assert.ok(models.some((model) => model.info.id === 'codex::custom-vision::reasoning=high'));
+  const schema = getConfigurationSchema(vision);
+  assert.deepEqual(schema?.properties?.reasoningEffort?.enum, ['low', 'high']);
   assert.equal(models.find((model) => model.info.id === 'codex::custom-text')?.info.maxOutputTokens, baseConfig.maxOutputTokens);
 });
 
@@ -211,7 +265,7 @@ test('resolveModelMetadata supports effective profile models without capability 
   assert.equal(customUnknown?.imageInput, false);
 });
 
-test('reasoning entries are compact variants and preserve model configuration metadata', () => {
+test('reasoning is model configuration rather than duplicated picker entries', () => {
   const models = buildProviderModels(baseConfig, [{
     slug: 'gpt-5.5',
     default_reasoning_level: 'medium',
@@ -225,15 +279,8 @@ test('reasoning entries are compact variants and preserve model configuration me
   }], 'chatgpt');
   const ids = models.map((model) => model.info.id);
 
-  assert.deepEqual(ids, [
-    'codex::gpt-5.5',
-    'codex::gpt-5.5::tier=fast',
-    'codex::gpt-5.5::reasoning=medium',
-    'codex::gpt-5.5::reasoning=low',
-    'codex::gpt-5.5::reasoning=high',
-    'codex::gpt-5.5::reasoning=max',
-    'codex::gpt-5.5::reasoning=ultra'
-  ]);
+  assert.deepEqual(ids, ['codex::gpt-5.5']);
+  assert.equal(models[0]?.info.name, 'GPT-5.5 (Auto)');
   const modelInfo = models[0]?.info as typeof models[0]['info'] & {
     configurationSchema?: { properties?: { reasoningEffort?: unknown } };
   };
@@ -249,6 +296,15 @@ test('reasoning entries are compact variants and preserve model configuration me
     reasoningEffort: 'high',
     serviceTier: 'fast'
   });
+});
+
+test('global tier labels unknown fallback metadata without inventing support', () => {
+  const fast = buildProviderModels({ ...baseConfig, defaultServiceTier: 'fast' }, [{ slug: 'unknown' }]);
+  const normal = buildProviderModels({ ...baseConfig, defaultServiceTier: 'default' }, [{ slug: 'unknown' }]);
+  assert.equal(fast[0]?.info.id, 'codex::unknown::tier=fast');
+  assert.equal(fast[0]?.info.name, 'Unknown (Fast)');
+  assert.equal(normal[0]?.info.id, 'codex::unknown::tier=default');
+  assert.equal(normal[0]?.info.name, 'Unknown (Normal)');
 });
 
 test('catalog entries record exact review and source metadata', () => {

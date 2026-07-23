@@ -3,6 +3,8 @@ import * as vscode from 'vscode';
 export type CredentialsSource = 'auto' | 'codexAuth' | 'secretStorage';
 export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
 export type ReasoningEffortSetting = 'auto' | ReasoningEffort;
+export type ServiceTier = 'default' | 'fast';
+export type ServiceTierSetting = 'auto' | ServiceTier;
 
 export interface ProviderConfig {
   baseURL: string;
@@ -11,6 +13,7 @@ export interface ProviderConfig {
   model: string;
   instructions: string;
   defaultReasoningEffort?: ReasoningEffort;
+  defaultServiceTier?: ServiceTier;
   maxOutputTokens: number;
   enableImageInput: boolean;
   includeIdeContext: boolean;
@@ -44,6 +47,7 @@ export function getProviderConfig(): ProviderConfig {
     model: getString(config, 'model', 'gpt-5.6-sol'),
     instructions: getString(config, 'instructions', 'You are a helpful coding assistant integrated with VS Code.'),
     defaultReasoningEffort: normalizeReasoningEffort(getString(config, 'defaultReasoningEffort', 'auto')),
+    defaultServiceTier: normalizeServiceTier(getEnum(config, 'defaultServiceTier', ['auto', 'default', 'fast'], 'auto')),
     maxOutputTokens: getPositiveNumber(config, 'maxOutputTokens', 8192),
     enableImageInput: config.get<boolean>('enableImageInput', true),
     includeIdeContext: config.get<boolean>('includeIdeContext', true),
@@ -85,6 +89,10 @@ export function normalizeReasoningEffort(value: unknown): ReasoningEffort | unde
     default:
       return undefined;
   }
+}
+
+export function normalizeServiceTier(value: unknown): ServiceTier | undefined {
+  return value === 'default' || value === 'fast' ? value : undefined;
 }
 
 function getString(config: vscode.WorkspaceConfiguration, key: string, fallback: string): string {
